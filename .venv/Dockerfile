@@ -5,13 +5,13 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Копіюємо файл з бібліотеками
-COPY requirements.txt .
+COPY ../requirements.txt .
 
 # Встановлюємо бібліотеки
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Копіюємо решту коду вашого додатку
-COPY . .
+COPY .. .
 
 # Вказуємо команду, яку потрібно виконати при запуску контейнера
 CMD ["python", "main.py"]
