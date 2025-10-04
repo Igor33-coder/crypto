@@ -31,11 +31,10 @@ logger = logging.getLogger(__name__)
 
 # --------------------------
 # API ключі та токени
-BINANCE_API_KEY = "PWQpIRWxV4N3pyORx75Hj91Qc7xwZoDERhKFe1NGi1wM82Vi29XDZ03C0zlnHzxP"
-BINANCE_API_SECRET = "oPPj0BZ4ezn6pEMFjVkK80D1ejJ2PKkAGjQFheVyxtzivUUGxtjgdBJQrwxu3ShM"
-TELEGRAM_TOKEN = "8231197598:AAHxtb6XRwepzgNZmEAMF_IuzbzaP5H_PAY"
-# --- ▼▼▼ ВСТАВТЕ ВАШ КЛЮЧ ВІД NEWSAPI.ORG ▼▼▼ ---
-NEWS_API_KEY = "81dedfdd151345f9821e772889aee762"  # <--- ЗАМІНІТЬ ЦЕ НА ВАШ КЛЮЧ
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
 BASE_URL = "https://api.binance.com"
 
