@@ -276,17 +276,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Повністю замініть вашу стару функцію button_handler на цю
 # Повністю замініть вашу стару функцію button_handler на цю
 # Повністю замініть вашу стару функцію button_handler на цю
+# Повністю замініть вашу стару функцію button_handler на цю
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
 
-    # --- ▼▼▼ ЗМІНЕНО: Рядок `await query.answer()` ВИДАЛЕНО ЗВІДСИ ▼▼▼ ---
-    # Тепер відповідь буде надсилатись лише там, де вона потрібна.
-
     async with aiohttp.ClientSession() as session:
         # --- БЛОК СКАНЕРА РИНКУ ---
         if query.data == "market_scanner":
-            # Відповідаємо на запит тут, щоб користувач не бачив "зависання"
             await query.answer()
             await query.edit_message_text("⏳ Шукаю активні монети на ринку...")
 
@@ -315,14 +312,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text=message, reply_markup=reply_markup)
             return
 
-        # --- БЛОК ОБРОБКИ ДОДАВАННЯ ЗІ СКАНЕРА (тепер він буде працювати) ---
+        # --- БЛОК ОБРОБКИ ДОДАВАННЯ ЗІ СКАНЕРА ---
         elif query.data.startswith("scanner_add_"):
             coin = query.data.replace("scanner_add_", "")
             user_coins.setdefault(user_id, [])
 
             if coin not in user_coins[user_id]:
                 user_coins[user_id].append(coin)
-                # Ця відповідь тепер буде першою і єдиною, тому вона з'явиться
                 await query.answer(text=f"✅ {coin} додано до списку!", show_alert=False)
             else:
                 await query.answer(text=f"⚠️ {coin} вже є у вашому списку.", show_alert=False)
@@ -345,7 +341,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
 
-        # ... (решта коду залишається без змін, але для надійності я додав `query.answer()` на початку кожного блоку)
+        # --- БЛОК "ДОДАТИ МОНЕТУ" (ВХІД У ЗАГАЛЬНИЙ СПИСОК) ---
         elif query.data == "add":
             await query.answer()
             all_pairs = await get_usdt_pairs(session)
@@ -354,6 +350,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = build_coin_keyboard(coins_page, page, "addcoin", len(all_pairs))
             await query.edit_message_text("Оберіть монету для додавання:", reply_markup=reply_markup)
 
+        # --- БЛОК ПЕРЕГОРТАННЯ СТОРІНОК У ЗАГАЛЬНОМУ СПИСКУ ---
         elif query.data.startswith("page_addcoin_"):
             await query.answer()
             page = int(query.data.replace("page_addcoin_", ""))
@@ -362,21 +359,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = build_coin_keyboard(coins_page, page, "addcoin", len(all_pairs))
             await query.edit_message_text("Оберіть монету для додавання:", reply_markup=reply_markup)
 
+        # --- ▼▼▼ ВИПРАВЛЕНИЙ БЛОК: ДОДАВАННЯ МОНЕТИ ІЗ ЗАГАЛЬНОГО СПИСКУ ▼▼▼ ---
         elif query.data.startswith("addcoin_"):
-            await query.answer()
             coin = query.data.replace("addcoin_", "")
             user_coins.setdefault(user_id, [])
+
             if coin not in user_coins[user_id]:
-                await query.edit_message_text(f"✅ {coin} додано до вашого списку відстеження.")
+                user_coins[user_id].append(coin)
+                # Показуємо спливаюче сповіщення і залишаємось на місці
+                await query.answer(text=f"✅ {coin} додано!", show_alert=False)
             else:
-                await query.edit_message_text(f"⚠️ {coin} вже є у списку")
+                # Показуємо спливаюче сповіщення і залишаємось на місці
+                await query.answer(text=f"⚠️ {coin} вже є у списку.", show_alert=False)
 
-            await asyncio.sleep(2)
-            coins = user_coins.get(user_id, [])
-            keyboard = [[InlineKeyboardButton(c, callback_data=f"analyze_{c}")] for c in coins]
-            keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
-            await query.edit_message_text("📋 Твої монети:", reply_markup=InlineKeyboardMarkup(keyboard))
+            # Важливо! Ми більше не змінюємо екран, а просто завершуємо виконання.
+            return
 
+        # ... (решта коду залишається без змін)
         elif query.data == "remove":
             await query.answer()
             coins = user_coins.get(user_id, [])
