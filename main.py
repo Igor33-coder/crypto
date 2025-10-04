@@ -128,18 +128,29 @@ def get_page(coins, page: int):
     return coins[start:end]
 
 
+# --- ▼▼▼ ОНОВЛЕНА ФУНКЦІЯ ДЛЯ СТВОРЕННЯ КЛАВІАТУР ▼▼▼ ---
 def build_coin_keyboard(coins, page, action, all_count):
+    # Створюємо кнопки для кожної монети на сторінці
     keyboard = [
         [InlineKeyboardButton(c, callback_data=f"{action}_{c}")]
         for c in coins
     ]
+
+    # Створюємо рядок з кнопками навігації (пагінації)
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{action}_{page - 1}"))
     if (page + 1) * PAGE_SIZE < all_count:
         nav_buttons.append(InlineKeyboardButton("➡️ Вперед", callback_data=f"page_{action}_{page + 1}"))
+
+    # Якщо є кнопки навігації, додаємо їх як один рядок
     if nav_buttons:
         keyboard.append(nav_buttons)
+
+    # --- НОВА ЧАСТИНА: Додаємо рядок з кнопкою "Головне меню" ---
+    # Ця кнопка буде з'являтися завжди внизу
+    keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
+
     return InlineKeyboardMarkup(keyboard)
 
 
