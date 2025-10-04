@@ -10,6 +10,9 @@ COPY ../requirements.txt .
 # Встановлюємо бібліотеки
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Завантажуємо необхідний словник для NLTK
+RUN python -m nltk.downloader vader_lexicon
+
 # Копіюємо решту коду вашого додатку
 COPY .. .
 
