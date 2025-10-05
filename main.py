@@ -1,4 +1,5 @@
 import os
+import praw
 import asyncio
 import logging
 import aiohttp
@@ -10,7 +11,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # --- ▼▼▼ НОВІ ІМПОРТИ ДЛЯ ШІ ТА НОВИН ▼▼▼ ---
-from newsapi import NewsApiClient
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
@@ -34,13 +34,24 @@ logger = logging.getLogger(__name__)
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
 BASE_URL = "https://api.binance.com"
 
+# --- ▼▼▼ Додайте ці ключі разом з іншими ▼▼▼ ---
+REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
+REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
+REDDIT_USER_AGENT = "CryptoSentimentBot/1.0" # Може бути будь-який унікальний рядок
+
+# Ініціалізація Reddit клієнта (додайте це після sia = SentimentIntensityAnalyzer())
+reddit = praw.Reddit(
+    client_id=REDDIT_CLIENT_ID,
+    client_secret=REDDIT_CLIENT_SECRET,
+    user_agent=REDDIT_USER_AGENT,
+)
+# --------------------------------------------------------------------------
+
 # --------------------------
 # Ініціалізація клієнтів
-newsapi = NewsApiClient(api_key=NEWS_API_KEY)
 sia = SentimentIntensityAnalyzer()
 # --------------------------
 
@@ -183,36 +194,52 @@ async def get_account_balance(session):
 # --------------------------
 # --- ▼▼▼ НОВА ФУНКЦІЯ ДЛЯ АНАЛІЗУ НОВИН ▼▼▼ ---
 # --------------------------
-def get_sentiment_analysis(asset_name):
-    """Отримує новини та аналізує їх тональність."""
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ СТАРУ ФУНКЦІЮ НА ЦЮ НОВУ ▼▼▼ ---
+async def get_sentiment_analysis(session, asset_name):
+    """
+    Збирає дані з CryptoCompare та Reddit, об'єднує їх
+    та аналізує загальну тональність.
+    """
+    logger.info(f"Запускаю гібридний аналіз настроїв для {asset_name}...")
+    combined_text = ""
+
+    # --- Джерело 1: CryptoCompare News ---
     try:
-        # Шукаємо новини за назвою монети (напр. "Bitcoin") за останній тиждень
-        all_articles = newsapi.get_everything(q=asset_name,
-                                              language='en',
-                                              sort_by='publishedAt',
-                                              page_size=10)  # Беремо 10 останніх новин
-
-        if not all_articles['articles']:
-            return 0.0  # Якщо новин немає, повертаємо нейтральну оцінку
-
-        # Збираємо заголовки та описи в один текст
-        full_text = " ".join([
-            f"{article['title']}. {article['description']}"
-            for article in all_articles['articles'] if article['description']
-        ])
-
-        # Аналізуємо текст за допомогою VADER
-        # polarity_scores повертає словник, нас цікавить 'compound'
-        # 'compound' - це сумарна оцінка від -1 (негатив) до +1 (позитив)
-        sentiment_score = sia.polarity_scores(full_text)['compound']
-        return sentiment_score
-
+        url = f"https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={asset_name}"
+        async with session.get(url) as resp:
+            news_data = await resp.json()
+            if news_data.get('Data'):
+                # Беремо заголовки 10 останніх новин
+                headlines = [article['title'] for article in news_data['Data'][:10]]
+                combined_text += ". ".join(headlines)
+                logger.info(f"Отримано {len(headlines)} новин з CryptoCompare.")
     except Exception as e:
-        logger.error(f"Помилка отримання або аналізу новин: {e}")
-        return 0.0  # У разі помилки повертаємо нейтральну оцінку
+        logger.error(f"Помилка отримання новин з CryptoCompare: {e}")
 
+    # --- Джерело 2: Reddit Posts ---
+    try:
+        # Шукаємо за назвою монети в найпопулярнішому сабредіті
+        subreddit = reddit.subreddit("CryptoCurrency")
+        # Беремо 10 найгарячіших постів, що згадують нашу монету
+        search_query = f"title:{asset_name}"
+        posts = [
+            post.title for post in subreddit.search(search_query, sort="hot", limit=10)
+        ]
+        if posts:
+            combined_text += ". ".join(posts)
+            logger.info(f"Отримано {len(posts)} постів з Reddit.")
+    except Exception as e:
+        logger.error(f"Помилка отримання постів з Reddit: {e}")
 
-# --------------------------
+    # --- Фінальний аналіз ---
+    if not combined_text:
+        logger.warning(f"Не вдалося зібрати текст для аналізу {asset_name}.")
+        return 0.0  # Якщо жодне джерело не спрацювало, повертаємо нейтральну оцінку
+
+    # Аналізуємо весь зібраний текст
+    sentiment_score = sia.polarity_scores(combined_text)['compound']
+    logger.info(f"Фінальна оцінка настроїв для {asset_name}: {sentiment_score:.2f}")
+    return sentiment_score
 # --- ▼▼▼ ОНОВЛЕНА ФУНКЦІЯ АНАЛІЗУ МОНЕТИ ▼▼▼ ---
 # --------------------------
 async def analyze_coin(session, symbol, balances):
@@ -226,7 +253,7 @@ async def analyze_coin(session, symbol, balances):
         balance = balances.get(asset, 0)
 
         # --- ІНТЕГРАЦІЯ ШІ ---
-        sentiment_score = get_sentiment_analysis(asset)
+        sentiment_score = await get_sentiment_analysis(session, asset)
         sentiment_label = "⚪️ Нейтральний"
         if sentiment_score >= 0.1:
             sentiment_label = "🟢 Позитивний"
