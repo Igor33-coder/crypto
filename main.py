@@ -306,7 +306,6 @@ async def analyze_coin(session, symbol, balances):
     except Exception as e:
         logger.error(f"Помилка аналізу {symbol}: {e}")
         return None
-        ```
 
 # --- Функції start та monitor залишаються майже без змін, але ми оновимо текст повідомлень в них ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
