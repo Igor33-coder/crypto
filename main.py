@@ -15,13 +15,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 # --- ▼▼▼ НОВІ ІМПОРТИ ДЛЯ ШІ ТА НОВИН ▼▼▼ ---
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
-# --- ▼▼▼ ПЕРВИННЕ НАЛАШТУВАННЯ NLTK ▼▼▼ ---
-# Це завантаження потрібно виконати лише один раз.
-# Якщо виникає помилка, розкоментуйте наступний рядок, запустіть скрипт,
-# а після успішного завантаження знову закоментуйте.
-# nltk.download('vader_lexicon')
-# ----------------------------------------------------
-
 # --------------------------
 # Логування
 logging.basicConfig(
@@ -540,7 +533,7 @@ async def monitor(app):
                         logger.error(f"Помилка відправки {user_id}: {e}")
 
             logger.info("Цикл моніторингу завершено. Наступна перевірка за годину.")
-            await asyncio.sleep(3600)
+            await asyncio.sleep(900)
 
 
 # Основна функція (без змін)
