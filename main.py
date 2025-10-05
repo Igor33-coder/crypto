@@ -1,5 +1,5 @@
 import os
-import praw
+import asyncpraw as praw
 import asyncio
 import logging
 import aiohttp
@@ -11,7 +11,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # --- ▼▼▼ НОВІ ІМПОРТИ ДЛЯ ШІ ТА НОВИН ▼▼▼ ---
-import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 # --- ▼▼▼ ПЕРВИННЕ НАЛАШТУВАННЯ NLTK ▼▼▼ ---
@@ -195,49 +194,50 @@ async def get_account_balance(session):
 # --- ▼▼▼ НОВА ФУНКЦІЯ ДЛЯ АНАЛІЗУ НОВИН ▼▼▼ ---
 # --------------------------
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ СТАРУ ФУНКЦІЮ НА ЦЮ НОВУ ▼▼▼ ---
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ СТАРУ ФУНКЦІЮ НА ЦЮ АСИНХРОННУ ВЕРСІЮ ▼▼▼ ---
 async def get_sentiment_analysis(session, asset_name):
     """
-    Збирає дані з CryptoCompare та Reddit, об'єднує їх
+    АСИНХРОННО збирає дані з CryptoCompare та Reddit, об'єднує їх
     та аналізує загальну тональність.
     """
-    logger.info(f"Запускаю гібридний аналіз настроїв для {asset_name}...")
-    combined_text = ""
+    logger.info(f"Запускаю асинхронний аналіз настроїв для {asset_name}...")
+    combined_texts = []
 
-    # --- Джерело 1: CryptoCompare News ---
+    # --- Джерело 1: CryptoCompare News (без змін) ---
     try:
         url = f"https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={asset_name}"
         async with session.get(url) as resp:
             news_data = await resp.json()
             if news_data.get('Data'):
-                # Беремо заголовки 10 останніх новин
                 headlines = [article['title'] for article in news_data['Data'][:10]]
-                combined_text += ". ".join(headlines)
+                combined_texts.extend(headlines)
                 logger.info(f"Отримано {len(headlines)} новин з CryptoCompare.")
     except Exception as e:
         logger.error(f"Помилка отримання новин з CryptoCompare: {e}")
 
-    # --- Джерело 2: Reddit Posts ---
+    # --- Джерело 2: Reddit Posts (тепер асинхронно) ---
     try:
-        # Шукаємо за назвою монети в найпопулярнішому сабредіті
-        subreddit = reddit.subreddit("CryptoCurrency")
-        # Беремо 10 найгарячіших постів, що згадують нашу монету
+        subreddit = await reddit.subreddit("CryptoCurrency")
         search_query = f"title:{asset_name}"
-        posts = [
-            post.title for post in subreddit.search(search_query, sort="hot", limit=10)
-        ]
+
+        # Використовуємо асинхронний цикл для отримання постів
+        posts = []
+        async for post in subreddit.search(search_query, sort="hot", limit=10):
+            posts.append(post.title)
+
         if posts:
-            combined_text += ". ".join(posts)
+            combined_texts.extend(posts)
             logger.info(f"Отримано {len(posts)} постів з Reddit.")
     except Exception as e:
         logger.error(f"Помилка отримання постів з Reddit: {e}")
 
     # --- Фінальний аналіз ---
-    if not combined_text:
+    if not combined_texts:
         logger.warning(f"Не вдалося зібрати текст для аналізу {asset_name}.")
-        return 0.0  # Якщо жодне джерело не спрацювало, повертаємо нейтральну оцінку
+        return 0.0
 
-    # Аналізуємо весь зібраний текст
-    sentiment_score = sia.polarity_scores(combined_text)['compound']
+    full_text = ". ".join(combined_texts)
+    sentiment_score = sia.polarity_scores(full_text)['compound']
     logger.info(f"Фінальна оцінка настроїв для {asset_name}: {sentiment_score:.2f}")
     return sentiment_score
 # --- ▼▼▼ ОНОВЛЕНА ФУНКЦІЯ АНАЛІЗУ МОНЕТИ ▼▼▼ ---
