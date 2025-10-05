@@ -52,9 +52,27 @@ reddit = praw.Reddit(
 
 # --- ▼▼▼ Додайте ключ Gemini разом з іншими ▼▼▼ ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# Налаштовуємо модель
+
+# Налаштовуємо Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-pro') # Використовуємо швидку і дешеву модель
+
+# --- НОВА, НАДІЙНА ІНІЦІАЛІЗАЦІЯ МОДЕЛІ ---
+# Програмно отримуємо список доступних моделей і беремо першу, що підтримує 'generateContent'
+try:
+    available_models = [m for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    if not available_models:
+        raise ValueError("Не знайдено жодної доступної моделі Gemini, що підтримує генерацію контенту.")
+
+    # Вибираємо першу модель зі списку (зазвичай це 'gemini-pro' або аналог)
+    model_name = available_models[0].name
+    model = genai.GenerativeModel(model_name)
+    logger.info(f"Успішно ініціалізовано модель Gemini: {model_name}")
+
+except Exception as e:
+    logger.error(f"Критична помилка ініціалізації моделі Gemini: {e}")
+    # Якщо модель не ініціалізувалася, бот не зможе працювати з ШІ.
+    # Можна або зупинити бота, або встановити 'model = None' і обробляти це в 'get_llm_analysis'
+    model = None
 # ----------------------------------------------------
 
 # --------------------------
@@ -209,6 +227,12 @@ async def get_llm_analysis(session, symbol, rsi, ema_bullish, volume_trend):
     Збирає новини, формує комплексний запит до LLM (Gemini)
     і отримує глибокий аналіз ринку.
     """
+    # --- ▼▼▼ НОВИЙ РЯДОК ▼▼▼ ---
+    # Перевіряємо, чи була модель успішно ініціалізована при старті
+    if model is None:
+        logger.warning("Модель Gemini не ініціалізована. Пропускаю LLM-аналіз.")
+        return {"recommendation": "NEUTRAL", "reason": "AI model is not available."}
+
     asset_name = symbol.replace("USDT", "")
     logger.info(f"Запускаю LLM-аналіз для {asset_name}...")
 
