@@ -7,6 +7,8 @@ import numpy as np
 import time
 import hmac
 import hashlib
+import google.generativeai as genai
+import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -47,7 +49,13 @@ reddit = praw.Reddit(
     client_secret=REDDIT_CLIENT_SECRET,
     user_agent=REDDIT_USER_AGENT,
 )
-# --------------------------------------------------------------------------
+
+# --- ▼▼▼ Додайте ключ Gemini разом з іншими ▼▼▼ ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Налаштовуємо модель
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash') # Використовуємо швидку і дешеву модель
+# ----------------------------------------------------
 
 # --------------------------
 # Ініціалізація клієнтів
@@ -195,53 +203,74 @@ async def get_account_balance(session):
 # --------------------------
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ СТАРУ ФУНКЦІЮ НА ЦЮ НОВУ ▼▼▼ ---
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ СТАРУ ФУНКЦІЮ НА ЦЮ АСИНХРОННУ ВЕРСІЮ ▼▼▼ ---
-async def get_sentiment_analysis(session, asset_name):
+# --- ▼▼▼ ЗАМІСТЬ get_sentiment_analysis ВСТАВТЕ ЦЮ НОВУ ФУНКЦІЮ ▼▼▼ ---
+async def get_llm_analysis(session, symbol, rsi, ema_bullish, volume_trend):
     """
-    АСИНХРОННО збирає дані з CryptoCompare та Reddit, об'єднує їх
-    та аналізує загальну тональність.
+    Збирає новини, формує комплексний запит до LLM (Gemini)
+    і отримує глибокий аналіз ринку.
     """
-    logger.info(f"Запускаю асинхронний аналіз настроїв для {asset_name}...")
-    combined_texts = []
+    asset_name = symbol.replace("USDT", "")
+    logger.info(f"Запускаю LLM-аналіз для {asset_name}...")
 
-    # --- Джерело 1: CryptoCompare News (без змін) ---
+    # 1. Збираємо текстові дані (новини та пости)
+    # Цей код взято з вашої попередньої get_sentiment_analysis
+    combined_texts = []
     try:
+        # CryptoCompare
         url = f"https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={asset_name}"
         async with session.get(url) as resp:
             news_data = await resp.json()
             if news_data.get('Data'):
-                headlines = [article['title'] for article in news_data['Data'][:10]]
+                headlines = [article['title'] for article in news_data['Data'][:5]]  # Беремо 5 новин
                 combined_texts.extend(headlines)
-                logger.info(f"Отримано {len(headlines)} новин з CryptoCompare.")
-    except Exception as e:
-        logger.error(f"Помилка отримання новин з CryptoCompare: {e}")
-
-    # --- Джерело 2: Reddit Posts (тепер асинхронно) ---
-    try:
+        # Reddit
         subreddit = await reddit.subreddit("CryptoCurrency")
-        search_query = f"title:{asset_name}"
-
-        # Використовуємо асинхронний цикл для отримання постів
-        posts = []
-        async for post in subreddit.search(search_query, sort="hot", limit=10):
-            posts.append(post.title)
-
-        if posts:
-            combined_texts.extend(posts)
-            logger.info(f"Отримано {len(posts)} постів з Reddit.")
+        posts = [post.title async for post in
+                 subreddit.search(f"title:{asset_name}", sort="hot", limit=5)]  # Беремо 5 постів
+        combined_texts.extend(posts)
     except Exception as e:
-        logger.error(f"Помилка отримання постів з Reddit: {e}")
+        logger.error(f"Помилка збору даних для LLM: {e}")
 
-    # --- Фінальний аналіз ---
     if not combined_texts:
-        logger.warning(f"Не вдалося зібрати текст для аналізу {asset_name}.")
-        return 0.0
+        return {"recommendation": "NEUTRAL", "reason": "Could not fetch market data."}
 
-    full_text = ". ".join(combined_texts)
-    sentiment_score = sia.polarity_scores(full_text)['compound']
-    logger.info(f"Фінальна оцінка настроїв для {asset_name}: {sentiment_score:.2f}")
-    return sentiment_score
-# --- ▼▼▼ ОНОВЛЕНА ФУНКЦІЯ АНАЛІЗУ МОНЕТИ ▼▼▼ ---
-# --------------------------
+    news_string = "\n".join(f"- {text}" for text in combined_texts)
+
+    # 2. Формуємо потужний промпт для Gemini
+    prompt = f"""
+    You are an expert crypto market analyst. Analyze the following data for {symbol} and provide a trading recommendation.
+
+    Technical Indicators:
+    - RSI: {rsi:.2f}
+    - EMA Trend: {'Bullish' if ema_bullish else 'Bearish'}
+    - Volume Trend: {volume_trend}
+
+    Recent News and Discussions:
+    {news_string}
+
+    Based on the synthesis of ALL the above information, provide your analysis.
+    Your response MUST be a single, valid JSON object with the following structure:
+    {{
+      "recommendation": "BUY", "SELL", or "NEUTRAL",
+      "confidence": "LOW", "MEDIUM", or "HIGH",
+      "reason": "A brief, one-sentence explanation for your recommendation."
+    }}
+    """
+
+    # 3. Робимо запит до API і обробляємо відповідь
+    try:
+        response = await model.generate_content_async(prompt)
+        # Очищуємо відповідь від markdown форматування
+        cleaned_response = response.text.replace("```json", "").replace("```", "").strip()
+        analysis_json = json.loads(cleaned_response)
+        logger.info(f"LLM-аналіз для {asset_name} успішний: {analysis_json}")
+        return analysis_json
+    except Exception as e:
+        logger.error(f"Помилка LLM-аналізу для {asset_name}: {e}")
+        return {"recommendation": "NEUTRAL", "reason": "Error during AI analysis."}
+
+
+# --- ▼▼▼ ТРОХИ ОНОВІТЬ ФУНКЦІЮ analyze_coin ▼▼▼ ---
 async def analyze_coin(session, symbol, balances):
     try:
         closes, volumes, price = await get_binance_data(session, symbol)
@@ -252,40 +281,32 @@ async def analyze_coin(session, symbol, balances):
         asset = symbol.replace("USDT", "")
         balance = balances.get(asset, 0)
 
-        # --- ІНТЕГРАЦІЯ ШІ ---
-        sentiment_score = await get_sentiment_analysis(session, asset)
-        sentiment_label = "⚪️ Нейтральний"
-        if sentiment_score >= 0.1:
-            sentiment_label = "🟢 Позитивний"
-        elif sentiment_score <= -0.1:
-            sentiment_label = "🔴 Негативний"
-        # ---------------------
+        # --- ІНТЕГРАЦІЯ LLM ---
+        # Передаємо ключові технічні дані в нову функцію
+        llm_result = await get_llm_analysis(session, symbol, rsi, ema10 > ema50, vol_trend)
 
-        result = {
-            "symbol": symbol, "price": price, "rsi": rsi, "ema10": ema10,
-            "ema50": ema50, "volume_trend": vol_trend, "balance": balance,
-            "sentiment_score": sentiment_score, "sentiment_label": sentiment_label,
-            "recommendation": "⚪️ NEUTRAL (Нейтральний)",
-            "stop_loss": None, "take_profit": None
+        # Формуємо фінальний результат на основі відповіді LLM
+        recommendation = f"⚪️ NEUTRAL ({llm_result.get('reason', 'N/A')})"
+        stop_loss, take_profit = None, None
+
+        if llm_result.get('recommendation') == "BUY" and llm_result.get('confidence') in ["MEDIUM", "HIGH"]:
+            recommendation = f"🟢 BUY (Впевненість: {llm_result.get('confidence')}. Причина: {llm_result.get('reason')})"
+            stop_loss = price * 0.98
+            take_profit = price * 1.05
+        elif llm_result.get('recommendation') == "SELL" and llm_result.get('confidence') in ["MEDIUM", "HIGH"]:
+            recommendation = f"🔴 SELL (Впевненість: {llm_result.get('confidence')}. Причина: {llm_result.get('reason')})"
+
+        return {
+            "symbol": symbol, "price": price, "rsi": rsi,
+            "recommendation": recommendation,
+            "balance": balance,
+            "stop_loss": stop_loss, "take_profit": take_profit
         }
-
-        # --- ЛОГІКА СИГНАЛУ ТЕПЕР ВРАХОВУЄ НАСТРІЙ РИНКУ ---
-        # Сигнал на покупку: технічні індикатори + позитивний настрій
-        if rsi < 35 and ema10 > ema50 and vol_trend == "зростає" and sentiment_score >= 0.1:
-            result["recommendation"] = "🟢 BUY (Сильний технічний сигнал, підтверджений новинами)"
-            result["stop_loss"] = price * 0.98
-            result["take_profit"] = price * 1.05
-
-        # Сигнал на продаж: технічні індикатори + негативний настрій
-        elif rsi > 65 and ema10 < ema50 and sentiment_score <= -0.1:
-            result["recommendation"] = "🔴 SELL (Сильний технічний сигнал, підтверджений новинами)"
-
-        return result
 
     except Exception as e:
         logger.error(f"Помилка аналізу {symbol}: {e}")
         return None
-
+        ```
 
 # --- Функції start та monitor залишаються майже без змін, але ми оновимо текст повідомлень в них ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
