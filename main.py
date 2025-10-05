@@ -327,10 +327,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- ▼▼▼ ЗМІНЕНО: ДОДАНО КНОПКУ СКАНЕРА ▼▼▼ ---
     keyboard = [
-        [InlineKeyboardButton("🔍 Сканер ринку", callback_data="market_scanner")],
-        [InlineKeyboardButton("➕ Додати монету", callback_data="add")],
-        [InlineKeyboardButton("➖ Видалити монету", callback_data="remove")],
-        [InlineKeyboardButton("📋 Мої монети", callback_data="mycoins")],
+        [InlineKeyboardButton("🔍 Сканер ринку 🔍", callback_data="market_scanner")],
+        [InlineKeyboardButton("➕ Додати монету ➕", callback_data="add")],
+        [InlineKeyboardButton("➖ Видалити монету ➖", callback_data="remove")],
+        [InlineKeyboardButton("📋 Мої монети 📋", callback_data="mycoins")],
     ]
     await update.message.reply_text(
         f"Привіт 👋! Я твій крипто-помічник.\n\n"
@@ -395,10 +395,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- БЛОК ПОВЕРНЕННЯ В ГОЛОВНЕ МЕНЮ ---
         elif query.data == "back_to_start":
             # ... (цей блок без змін)
-            keyboard = [[InlineKeyboardButton("🔍 Сканер ринку", callback_data="market_scanner")],
-                        [InlineKeyboardButton("➕ Додати монету", callback_data="add")],
-                        [InlineKeyboardButton("➖ Видалити монету", callback_data="remove")],
-                        [InlineKeyboardButton("📋 Мої монети", callback_data="mycoins")], ]
+            keyboard = [[InlineKeyboardButton("🔍 Сканер ринку 🔍", callback_data="market_scanner")],
+                        [InlineKeyboardButton("➕ Додати монету ➕", callback_data="add")],
+                        [InlineKeyboardButton("➖ Видалити монету ➖", callback_data="remove")],
+                        [InlineKeyboardButton("📋 Мої монети 📋", callback_data="mycoins")], ]
             await query.edit_message_text(f"Привіт 👋! Я твій крипто-помічник.",
                                           reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
