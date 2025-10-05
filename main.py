@@ -54,7 +54,7 @@ reddit = praw.Reddit(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Налаштовуємо модель
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash') # Використовуємо швидку і дешеву модель
+model = genai.GenerativeModel('gemini-pro') # Використовуємо швидку і дешеву модель
 # ----------------------------------------------------
 
 # --------------------------
@@ -327,51 +327,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# --------------------------
-# --- ▼▼▼ ОНОВЛЕНА ФУНКЦІЯ ОБРОБКИ КНОПОК ▼▼▼ ---
-# --- (Змінено лише блок analyze_, щоб показувати дані ШІ) ---
-# --------------------------
-# Повністю замініть вашу стару функцію button_handler на цю
-# Повністю замініть вашу стару функцію button_handler на цю
-# Повністю замініть вашу стару функцію button_handler на цю
-# Повністю замініть вашу стару функцію button_handler на цю
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
 
     async with aiohttp.ClientSession() as session:
-        # --- БЛОК СКАНЕРА РИНКУ ---
-        if query.data == "market_scanner":
-            await query.answer()
-            await query.edit_message_text("⏳ Шукаю активні монети на ринку...")
-
-            promising_coins = await market_screener(session)
-
-            if not promising_coins:
-                keyboard = [[InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")]]
-                await query.edit_message_text(
-                    "Наразі на ринку немає монет з високою волатильністю та об'ємом.",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                return
-
-            keyboard = []
-            for coin in sorted(list(promising_coins)):
-                button = [InlineKeyboardButton(f"➕ {coin}", callback_data=f"scanner_add_{coin}")]
-                keyboard.append(button)
-
-            keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            message = (
-                f"📈 **Результати сканера ринку:**\n\n"
-                f"Ось список найактивніших монет. Натисніть на монету, щоб додати її до вашого списку відстеження:"
-            )
-            await query.edit_message_text(text=message, reply_markup=reply_markup)
-            return
-
-        # --- БЛОК ОБРОБКИ ДОДАВАННЯ ЗІ СКАНЕРА ---
-        elif query.data.startswith("scanner_add_"):
+        # Блок scanner_add_ тепер повинен показувати сповіщення, тому ми відповідаємо на запит всередині
+        if query.data.startswith("scanner_add_"):
             coin = query.data.replace("scanner_add_", "")
             user_coins.setdefault(user_id, [])
 
@@ -382,118 +345,79 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(text=f"⚠️ {coin} вже є у вашому списку.", show_alert=False)
             return
 
-        # --- БЛОК ПОВЕРНЕННЯ В ГОЛОВНЕ МЕНЮ ---
-        elif query.data == "back_to_start":
-            await query.answer()
-            keyboard = [
-                [InlineKeyboardButton("🔍 Сканер ринку", callback_data="market_scanner")],
-                [InlineKeyboardButton("➕ Додати монету", callback_data="add")],
-                [InlineKeyboardButton("➖ Видалити монету", callback_data="remove")],
-                [InlineKeyboardButton("📋 Мої монети", callback_data="mycoins")],
-            ]
-            await query.edit_message_text(
-                f"Привіт 👋! Я твій крипто-помічник.\n\n"
-                f"• Натисни **'Сканер ринку'**, щоб знайти найактивніші монети прямо зараз.\n"
-                f"• Або керуй своїм персональним списком відстеження.",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-
-        # --- БЛОК "ДОДАТИ МОНЕТУ" (ВХІД У ЗАГАЛЬНИЙ СПИСОК) ---
-        elif query.data == "add":
-            await query.answer()
-            all_pairs = await get_usdt_pairs(session)
-            page = 0
-            coins_page = get_page(all_pairs, page)
-            reply_markup = build_coin_keyboard(coins_page, page, "addcoin", len(all_pairs))
-            await query.edit_message_text("Оберіть монету для додавання:", reply_markup=reply_markup)
-
-        # --- БЛОК ПЕРЕГОРТАННЯ СТОРІНОК У ЗАГАЛЬНОМУ СПИСКУ ---
-        elif query.data.startswith("page_addcoin_"):
-            await query.answer()
-            page = int(query.data.replace("page_addcoin_", ""))
-            all_pairs = await get_usdt_pairs(session)
-            coins_page = get_page(all_pairs, page)
-            reply_markup = build_coin_keyboard(coins_page, page, "addcoin", len(all_pairs))
-            await query.edit_message_text("Оберіть монету для додавання:", reply_markup=reply_markup)
-
-        # --- ▼▼▼ ВИПРАВЛЕНИЙ БЛОК: ДОДАВАННЯ МОНЕТИ ІЗ ЗАГАЛЬНОГО СПИСКУ ▼▼▼ ---
+        # Те саме для addcoin_
         elif query.data.startswith("addcoin_"):
             coin = query.data.replace("addcoin_", "")
             user_coins.setdefault(user_id, [])
 
             if coin not in user_coins[user_id]:
                 user_coins[user_id].append(coin)
-                # Показуємо спливаюче сповіщення і залишаємось на місці
                 await query.answer(text=f"✅ {coin} додано!", show_alert=False)
             else:
-                # Показуємо спливаюче сповіщення і залишаємось на місці
                 await query.answer(text=f"⚠️ {coin} вже є у списку.", show_alert=False)
-
-            # Важливо! Ми більше не змінюємо екран, а просто завершуємо виконання.
             return
 
-        # ... (решта коду залишається без змін)
-        elif query.data == "remove":
-            await query.answer()
-            coins = user_coins.get(user_id, [])
-            if not coins:
-                await query.edit_message_text("Список порожній.")
-                return
-            page = 0
-            coins_page = get_page(coins, page)
-            reply_markup = build_coin_keyboard(coins_page, page, "removecoin", len(coins))
-            await query.edit_message_text("Оберіть монету для видалення:", reply_markup=reply_markup)
+        # Для всіх інших випадків відповідаємо на початку
+        await query.answer()
 
-        elif query.data.startswith("page_removecoin_"):
-            await query.answer()
-            page = int(query.data.replace("page_removecoin_", ""))
-            coins = user_coins.get(user_id, [])
-            coins_page = get_page(coins, page)
-            reply_markup = build_coin_keyboard(coins_page, page, "removecoin", len(coins))
-            await query.edit_message_text("Оберіть монету для видалення:", reply_markup=reply_markup)
-
-        elif query.data.startswith("removecoin_"):
-            await query.answer()
-            coin = query.data.replace("removecoin_", "")
-            if coin in user_coins.get(user_id, []):
-                user_coins[user_id].remove(coin)
-                await query.edit_message_text(f"❌ {coin} видалено")
-            else:
-                await query.edit_message_text(f"⚠️ {coin} немає у списку")
-            await asyncio.sleep(2)
-            coins = user_coins.get(user_id, [])
-            if not coins:
+        # --- БЛОК СКАНЕРА РИНКУ ---
+        if query.data == "market_scanner":
+            await query.edit_message_text("⏳ Шукаю активні монети на ринку...")
+            # ... (решта цього блоку без змін)
+            promising_coins = await market_screener(session)
+            if not promising_coins:
                 keyboard = [[InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")]]
-                await query.edit_message_text("Список порожній.", reply_markup=InlineKeyboardMarkup(keyboard))
+                await query.edit_message_text("Наразі на ринку немає монет з високою волатильністю та об'ємом.",
+                                              reply_markup=InlineKeyboardMarkup(keyboard))
                 return
-            page = 0
-            coins_page = get_page(coins, page)
-            reply_markup = build_coin_keyboard(coins_page, page, "removecoin", len(coins))
-            await query.edit_message_text("Оберіть монету для видалення:", reply_markup=reply_markup)
-
-        elif query.data == "mycoins":
-            await query.answer()
-            coins = user_coins.get(user_id, [])
-            if not coins:
-                await query.edit_message_text("Список відстежуваних монет порожній.")
-                return
-            keyboard = [[InlineKeyboardButton(c, callback_data=f"analyze_{c}")] for c in coins]
+            keyboard = []
+            for coin in sorted(list(promising_coins)):
+                button = [InlineKeyboardButton(f"➕ {coin}", callback_data=f"scanner_add_{coin}")]
+                keyboard.append(button)
             keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("📋 Твої монети (натисніть для глибокого аналізу):", reply_markup=reply_markup)
+            message = "📈 **Результати сканера ринку:**\n\nНатисніть на монету, щоб додати її до вашого списку відстеження:"
+            await query.edit_message_text(text=message, reply_markup=reply_markup)
 
+        # --- БЛОК ПОВЕРНЕННЯ В ГОЛОВНЕ МЕНЮ ---
+        elif query.data == "back_to_start":
+            # ... (цей блок без змін)
+            keyboard = [[InlineKeyboardButton("🔍 Сканер ринку", callback_data="market_scanner")],
+                        [InlineKeyboardButton("➕ Додати монету", callback_data="add")],
+                        [InlineKeyboardButton("➖ Видалити монету", callback_data="remove")],
+                        [InlineKeyboardButton("📋 Мої монети", callback_data="mycoins")], ]
+            await query.edit_message_text(f"Привіт 👋! Я твій крипто-помічник.",
+                                          reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+        # --- БЛОК "ДОДАТИ МОНЕТУ" ---
+        elif query.data == "add":
+            # ... (цей блок без змін)
+            all_pairs = await get_usdt_pairs(session)
+            page = 0
+            coins_page = get_page(all_pairs, page)
+            reply_markup = build_coin_keyboard(coins_page, page, "addcoin", len(all_pairs))
+            await query.edit_message_text("Оберіть монету для додавання:", reply_markup=reply_markup)
+
+        # --- БЛОК ПЕРЕГОРТАННЯ СТОРІНОК ---
+        elif query.data.startswith("page_addcoin_"):
+            # ... (цей блок без змін)
+            page = int(query.data.replace("page_addcoin_", ""))
+            all_pairs = await get_usdt_pairs(session)
+            coins_page = get_page(all_pairs, page)
+            reply_markup = build_coin_keyboard(coins_page, page, "addcoin", len(all_pairs))
+            await query.edit_message_text("Оберіть монету для додавання:", reply_markup=reply_markup)
+
+        # --- ▼▼▼ ОНОВЛЕНИЙ БЛОК АНАЛІЗУ, ЩОБ ВИПРАВИТИ KEYERROR ▼▼▼ ---
         elif query.data.startswith("analyze_"):
-            await query.answer()
             coin = query.data.replace("analyze_", "")
-            await query.edit_message_text(f"⏳ Роблю глибокий аналіз {coin}...")
+            await query.edit_message_text(f"⏳ Роблю глибокий аналіз {coin} за допомогою ШІ...")
+
             balances = await get_account_balance(session)
             analysis_data = await analyze_coin(session, coin, balances)
+
             keyboard = [
-                [
-                    InlineKeyboardButton("⬅️ До списку", callback_data="mycoins"),
-                    InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")
-                ]
+                [InlineKeyboardButton("⬅️ До списку", callback_data="mycoins")],
+                [InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -501,50 +425,78 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(f"Не вдалося отримати дані для {coin}.", reply_markup=reply_markup)
                 return
 
-            asset_name = analysis_data["symbol"].replace("USDT", "")
+            # Новий формат повідомлення, який відповідає новій структурі даних
             message = (
                 f"📊 **{analysis_data['symbol']}**\n\n"
-                f"💰 Ціна: `{analysis_data['price']:.6f}`\n"
-                f"📰 Настрій: **{analysis_data['sentiment_label']}** (`{analysis_data['sentiment_score']:.2f}`)\n"
+                f"💰 Поточна ціна: `{analysis_data['price']:.6f}`\n"
                 f"📈 RSI: `{analysis_data['rsi']:.2f}`\n\n"
-                f"📌 **Сигнал: {analysis_data['recommendation']}**"
+                f"📌 **Сигнал від ШІ (Gemini):** {analysis_data['recommendation']}"
             )
-            if analysis_data["recommendation"].startswith("🟢 BUY"):
-                message += f"\n\n**План:**\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
+
+            if analysis_data.get("stop_loss"):
+                message += f"\n\n**Пропонований план:**\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
+
             await query.edit_message_text(text=message, reply_markup=reply_markup, parse_mode='Markdown')
 
+        # ... (решта блоків, як-от 'remove' та 'mycoins', залишаються без змін)
+        elif query.data == "remove":
+            coins = user_coins.get(user_id, [])
+            if not coins: await query.edit_message_text("Список порожній."); return
+            page = 0
+            coins_page = get_page(coins, page)
+            reply_markup = build_coin_keyboard(coins_page, page, "removecoin", len(coins))
+            await query.edit_message_text("Оберіть монету для видалення:", reply_markup=reply_markup)
+        elif query.data.startswith("page_removecoin_"):
+            page = int(query.data.replace("page_removecoin_", ""))
+            coins = user_coins.get(user_id, [])
+            coins_page = get_page(coins, page)
+            reply_markup = build_coin_keyboard(coins_page, page, "removecoin", len(coins))
+            await query.edit_message_text("Оберіть монету для видалення:", reply_markup=reply_markup)
+        elif query.data.startswith("removecoin_"):
+            coin = query.data.replace("removecoin_", "")
+            if coin in user_coins.get(user_id, []):
+                user_coins[user_id].remove(coin); await query.edit_message_text(f"❌ {coin} видалено")
+            else:
+                await query.edit_message_text(f"⚠️ {coin} немає у списку")
+            await asyncio.sleep(2)
+            coins = user_coins.get(user_id, [])
+            if not coins: keyboard = [
+                [InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")]]; await query.edit_message_text(
+                "Список порожній.", reply_markup=InlineKeyboardMarkup(keyboard)); return
+            page = 0
+            coins_page = get_page(coins, page)
+            reply_markup = build_coin_keyboard(coins_page, page, "removecoin", len(coins))
+            await query.edit_message_text("Оберіть монету для видалення:", reply_markup=reply_markup)
+        elif query.data == "mycoins":
+            coins = user_coins.get(user_id, [])
+            if not coins: await query.edit_message_text("Список відстежуваних монет порожній."); return
+            keyboard = [[InlineKeyboardButton(c, callback_data=f"analyze_{c}")] for c in coins]
+            keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text("📋 Твої монети (натисніть для глибокого аналізу):", reply_markup=reply_markup)
+
 # --- Оновлена функція моніторингу ---
-# --- ▼▼▼ ОНОВЛЕНА ФУНКЦІЯ МОНІТОРИНГУ (ГІБРИДНА ВЕРСІЯ) ▼▼▼ ---
 async def monitor(app):
     async with aiohttp.ClientSession() as session:
         while True:
-            # 1. Запускаємо сканер ринку ОДИН РАЗ на початку циклу.
-            # Це ефективно, бо не потрібно робити це для кожного користувача.
             promising_coins_from_screener = await market_screener(session)
-
             if not promising_coins_from_screener:
                 logger.info("Скринер не знайшов активних монет.")
 
-            # 2. Тепер проходимо по кожному користувачеві.
             for user_id, user_tracked_coins in user_coins.items():
                 balances = await get_account_balance(session)
-
-                # 3. ▼▼▼ КЛЮЧОВА ЗМІНА: СТВОРЮЄМО ОБ'ЄДНАНИЙ СПИСОК ▼▼▼
-                # Використовуємо `set` для автоматичного видалення дублікатів.
-                # Якщо монета є і в списку користувача, і в сканері, вона буде перевірена лише раз.
                 coins_to_analyze = set(user_tracked_coins) | promising_coins_from_screener
 
-                if not coins_to_analyze:
-                    continue  # Якщо у користувача немає монет і сканер порожній, переходимо до наступного.
+                if not coins_to_analyze: continue
 
                 logger.info(f"Для користувача {user_id} аналізується {len(coins_to_analyze)} монет.")
                 messages = []
-                # 4. Аналізуємо монети з ОБ'ЄДНАНОГО списку.
                 for coin in coins_to_analyze:
                     analysis_data = await analyze_coin(session, coin, balances)
 
-                    if analysis_data and "NEUTRAL" not in analysis_data["recommendation"]:
-                        # Визначаємо, звідки прийшов сигнал, для більш інформативного повідомлення.
+                    # Перевіряємо, чи є сигнал BUY або SELL у новій відповіді
+                    if analysis_data and (
+                            "BUY" in analysis_data["recommendation"] or "SELL" in analysis_data["recommendation"]):
                         if coin in user_tracked_coins:
                             alert_type = "🚨 **Сигнал по вашій монеті!** 🚨"
                         else:
@@ -554,17 +506,12 @@ async def monitor(app):
                             f"{alert_type}\n\n"
                             f"Монета: **{analysis_data['symbol']}**\n"
                             f"💰 Ціна: `{analysis_data['price']:.6f}` USDT\n"
-                            f"📰 Настрій новин: **{analysis_data['sentiment_label']}**\n"
-                            f"📌 Сигнал: **{analysis_data['recommendation']}**"
+                            f"📌 Сигнал від ШІ: **{analysis_data['recommendation']}**"
                         )
                         if analysis_data.get("stop_loss"):
-                            message += (
-                                f"\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n"
-                                f"🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
-                            )
+                            message += f"\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
                         messages.append(message)
 
-                # 5. Надсилаємо знайдені сигнали користувачеві.
                 if messages:
                     try:
                         full_message = "\n\n".join(messages)
@@ -576,7 +523,6 @@ async def monitor(app):
             await asyncio.sleep(3600)
 
 
-# --------------------------
 # Основна функція (без змін)
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
