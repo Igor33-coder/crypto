@@ -548,9 +548,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 button = [InlineKeyboardButton(f"➕ {exchange}: {symbol}", callback_data=f"scanner_add_{coin_id}")]
                 keyboard.append(button)
 
-            # --- ОСЬ НАШЕ ВИПРАВЛЕННЯ ---
-            # Додаємо кнопку "Головне меню" в кінець списку кнопок
-            keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
+                # --- ОСЬ НАШЕ ВИПРАВЛЕННЯ ---
+                # Додаємо кнопку "Головне меню" в кінець списку кнопок
+                keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
 
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
