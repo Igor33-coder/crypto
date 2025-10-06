@@ -512,7 +512,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.data.startswith("scanner_add_") or query.data.startswith("addcoin_"):
             if query.data.startswith("scanner_add_"):
                 coin_identifier = query.data.replace("scanner_add_", "")
-            else:  # addcoin_ (зі загального списку, за замовчуванням це Binance)
+            else:
                 symbol = query.data.replace("addcoin_", "")
                 coin_identifier = f"Binance:{symbol}"
 
@@ -530,7 +530,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- БЛОК СКАНЕРА РИНКУ ---
         if query.data == "market_scanner":
             await query.edit_message_text("⏳ Сканую ринки Binance та Bybit...")
-
             all_promising_coins = set()
             for exchange_name, adapter in EXCHANGES.items():
                 promising_on_exchange = await run_market_scanner_for_exchange(session, adapter)
@@ -540,38 +539,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = [[InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")]]
                 await query.edit_message_text("Наразі на ринках немає активних монет.",
                                               reply_markup=InlineKeyboardMarkup(keyboard))
-                return
+            else:
+                keyboard = []
+                for coin_id in sorted(list(all_promising_coins)):
+                    exchange, symbol = coin_id.split(':')
+                    button = [InlineKeyboardButton(f"➕ {exchange}: {symbol}", callback_data=f"scanner_add_{coin_id}")]
+                    keyboard.append(button)
 
-            keyboard = []
-            for coin_id in sorted(list(all_promising_coins)):
-                exchange, symbol = coin_id.split(':')
-                button = [InlineKeyboardButton(f"➕ {exchange}: {symbol}", callback_data=f"scanner_add_{coin_id}")]
-                keyboard.append(button)
+                keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "📈 **Результати сканера ринків:**\n\nНатисніть на монету, щоб додати її до списку відстеження:",
+                    reply_markup=reply_markup)
 
-            # --- ОСЬ НАШЕ ВИПРАВЛЕННЯ ---
-            # Додаємо кнопку "Головне меню" в кінець списку кнопок
-            keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
-
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "📈 **Результати сканера ринків:**\n\nНатисніть на монету, щоб додати її до списку відстеження:",
-                reply_markup=reply_markup)
-
-        # --- БЛОК "МОЇ МОНЕТИ" (ОНОВЛЕНИЙ) ---
+        # --- БЛОК "МОЇ МОНЕТИ" ---
         elif query.data == "mycoins":
             coins = user_coins.get(user_id, [])
             if not coins:
                 await query.edit_message_text("Список відстежуваних монет порожній.")
-                return
-            # Кнопки тепер показують повний ідентифікатор
-            keyboard = [[InlineKeyboardButton(coin_id.replace(":", ": "), callback_data=f"analyze_{coin_id}")] for
-                        coin_id in sorted(coins)]
-            keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("📋 **Твої монети** (натисніть для глибокого аналізу):",
-                                          reply_markup=reply_markup, parse_mode='Markdown')
+            else:
+                keyboard = [[InlineKeyboardButton(coin_id.replace(":", ": "), callback_data=f"analyze_{coin_id}")] for
+                            coin_id in sorted(coins)]
+                keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text("📋 **Твої монети** (натисніть для глибокого аналізу):",
+                                              reply_markup=reply_markup, parse_mode='Markdown')
 
-            # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ЦЕЙ БЛОК У ВАШОМУ button_handler ▼▼▼ ---
+        # --- БЛОК АНАЛІЗУ КОНКРЕТНОЇ МОНЕТИ ---
         elif query.data.startswith("analyze_"):
             coin_identifier = query.data.replace("analyze_", "")
             try:
@@ -581,7 +575,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             await query.edit_message_text(f"⏳ Роблю глибокий аналіз {symbol} на {exchange_name}...")
-
             balances = await get_account_balance(session)
             analysis_data = await analyze_coin(session, symbol, exchange_name, balances)
 
@@ -592,53 +585,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not analysis_data:
                 await query.edit_message_text(f"Не вдалося отримати дані для {symbol} на {exchange_name}.",
                                               reply_markup=reply_markup)
-                return
-
-            # --- Формуємо нову, детальну аналітичну картку ---
-
-            # Допоміжні рядки для красивого виводу
-            rsi = analysis_data.get('rsi', 0)
-            rsi_text = f"{rsi:.2f}"
-            if rsi < 30:
-                rsi_text += " (зона перепроданості)"
-            elif rsi > 70:
-                rsi_text += " (зона перекупленості)"
-
-            ema10 = analysis_data.get('ema10', 0)
-            ema50 = analysis_data.get('ema50', 0)
-            ema_text = "Висхідний (EMA10 > EMA50)" if ema10 > ema50 else "Низхідний (EMA10 < EMA50)"
-
-            vader = analysis_data.get('vader_score', 0)
-            vader_text = f"{vader:.2f}"
-            if vader >= 0.1:
-                vader_text += " (Позитивний)"
-            elif vader <= -0.1:
-                vader_text += " (Негативний)"
             else:
-                vader_text += " (Нейтральний)"
+                rsi = analysis_data.get('rsi', 0)
+                rsi_text = f"{rsi:.2f}" + (
+                    " (зона перепроданості)" if rsi < 30 else " (зона перекупленості)" if rsi > 70 else "")
+                ema_text = "Висхідний (EMA10 > EMA50)" if analysis_data.get('ema10', 0) > analysis_data.get('ema50',
+                                                                                                            0) else "Низхідний (EMA10 < EMA50)"
+                vader = analysis_data.get('vader_score', 0)
+                vader_text = f"{vader:.2f}" + (
+                    " (Позитивний)" if vader >= 0.1 else " (Негативний)" if vader <= -0.1 else " (Нейтральний)")
 
-            message = (
-                f"📊 **{analysis_data.get('exchange')} | {analysis_data.get('symbol')}**\n\n"
-                f"💰 **Поточна ціна:** `{analysis_data.get('price', 0):.6f}`\n"
-                f"💵 **Ваш баланс:** `{analysis_data.get('balance', 0)}`\n\n"
-                f"📌 **Вердикт ШІ (Gemini):** {analysis_data.get('recommendation', 'Помилка')}\n\n"
-                f"--- **Технічний аналіз (1h)** ---\n"
-                f"📈 **RSI:** `{rsi_text}`\n"
-                f"📊 **EMA Trend:** `{ema_text}`\n"
-                f"🔊 **Тренд об'єму:** `{analysis_data.get('volume_trend', 'N/A')}`\n"
-                f"🕯️ **Свічні патерни:** `{analysis_data.get('candlestick_patterns', 'N/A')}`\n\n"
-                f"--- **Аналіз настроїв** ---\n"
-                f"📰 **VADER Score:** `{vader_text}`"
-            )
-
-            if analysis_data.get("stop_loss"):
-                message += (
-                    f"\n\n**Пропонований план:**\n"
-                    f"🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n"
-                    f"🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
+                message = (
+                    f"📊 **{analysis_data.get('exchange')} | {analysis_data.get('symbol')}**\n\n"
+                    f"💰 **Поточна ціна:** `{analysis_data.get('price', 0):.6f}`\n"
+                    f"💵 **Ваш баланс:** `{analysis_data.get('balance', 0)}`\n\n"
+                    f"📌 **Вердикт ШІ (Gemini):** {analysis_data.get('recommendation', 'Помилка')}\n\n"
+                    f"--- **Технічний аналіз (1h)** ---\n"
+                    f"📈 **RSI:** `{rsi_text}`\n"
+                    f"📊 **EMA Trend:** `{ema_text}`\n"
+                    f"🔊 **Тренд об'єму:** `{analysis_data.get('volume_trend', 'N/A')}`\n"
+                    f"🕯️ **Свічні патерни:** `{analysis_data.get('candlestick_patterns', 'N/A')}`\n\n"
+                    f"--- **Аналіз настроїв** ---\n"
+                    f"📰 **VADER Score:** `{vader_text}`"
                 )
+                if analysis_data.get("stop_loss"):
+                    message += f"\n\n**Пропонований план:**\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
 
-            await query.edit_message_text(text=message, reply_markup=reply_markup, parse_mode='Markdown')
+                await query.edit_message_text(text=message, reply_markup=reply_markup, parse_mode='Markdown')
 
         # --- БЛОК ВИДАЛЕННЯ МОНЕТИ (ОНОВЛЕНИЙ) ---
         elif query.data == "remove":
