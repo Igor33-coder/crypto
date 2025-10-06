@@ -530,22 +530,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- БЛОК СКАНЕРА РИНКУ ---
         if query.data == "market_scanner":
             await query.edit_message_text("⏳ Сканую ринки Binance та Bybit...")
-            # ... (решта цього блоку без змін)
+
             all_promising_coins = set()
             for exchange_name, adapter in EXCHANGES.items():
                 promising_on_exchange = await run_market_scanner_for_exchange(session, adapter)
                 all_promising_coins.update(promising_on_exchange)
+
             if not all_promising_coins:
                 keyboard = [[InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")]]
                 await query.edit_message_text("Наразі на ринках немає активних монет.",
                                               reply_markup=InlineKeyboardMarkup(keyboard))
                 return
+
             keyboard = []
             for coin_id in sorted(list(all_promising_coins)):
                 exchange, symbol = coin_id.split(':')
                 button = [InlineKeyboardButton(f"➕ {exchange}: {symbol}", callback_data=f"scanner_add_{coin_id}")]
                 keyboard.append(button)
+
+            # --- ОСЬ НАШЕ ВИПРАВЛЕННЯ ---
+            # Додаємо кнопку "Головне меню" в кінець списку кнопок
             keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
+
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
                 "📈 **Результати сканера ринків:**\n\nНатисніть на монету, щоб додати її до списку відстеження:",
