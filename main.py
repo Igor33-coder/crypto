@@ -760,7 +760,7 @@ async def monitor(app):
                     except Exception as e:
                         logger.error(f"Помилка відправки ЗВЕДЕННЯ {user_id}: {e}")
 
-            logger.info("Цикл моніторингу завершено. Наступна перевірка за 15 хвилин.")
+            logger.info("Цикл моніторингу завершено. Наступна перевірка за 10 хвилин.")
             await asyncio.sleep(600)
 
 # Основна функція (без змін)
