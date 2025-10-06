@@ -151,8 +151,7 @@ class BybitAdapter(ExchangeAdapter):
         # Обробляємо відповідь
         return self.format_klines_data(response.get('result', {}).get('list', []), symbol)
 
-    async def get_market_tickers(self, session):
-        # Використовуємо новий метод для отримання тикерів
+    async def get_market_tickers(self, session):  # session тут більше не потрібен, але залишимо для сумісності
         response = await self.client.get_tickers(category="spot")
         return response.get('result', {}).get('list', [])
 
@@ -219,6 +218,7 @@ async def run_market_scanner_for_exchange(session, adapter):
     promising_coins = set()
 
     try:
+        # Цей рядок тепер буде працювати правильно для обох адаптерів
         all_tickers = await adapter.get_market_tickers(session)
 
         for ticker in all_tickers:
