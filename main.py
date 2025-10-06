@@ -225,36 +225,31 @@ async def run_market_scanner_for_exchange(session, adapter):
     try:
         all_tickers = await adapter.get_market_tickers(session)
 
-        if adapter.name == "Bybit" and all_tickers:
-            logger.info(f"DEBUG BYBIT TICKER: {all_tickers[0]}")
+        # Видаляємо рядок для налагодження, він нам більше не потрібен
+        # if adapter.name == "Bybit" and all_tickers:
+        #     logger.info(f"DEBUG BYBIT TICKER: {all_tickers[0]}")
 
         for ticker in all_tickers:
             symbol = None
             quote_volume = 0
             price_change_percent = 0
 
-            # --- Адаптуємо логіку під унікальну структуру даних кожної біржі ---
             if adapter.name == "Binance":
                 symbol = ticker.get('symbol')
                 if not symbol or not symbol.endswith('USDT'): continue
                 quote_volume = float(ticker.get('quoteVolume', 0))
                 price_change_percent = float(ticker.get('priceChangePercent', 0))
 
-            # --- ▼▼▼ ОСЬ ВИПРАВЛЕНА ЛОГІКА ДЛЯ BYBIT ▼▼▼ ---
             elif adapter.name == "Bybit":
                 symbol = ticker.get('symbol')
                 if not symbol or not symbol.endswith('USDT'): continue
 
-                # Правильна назва поля для зміни ціни - 'price_24h_pcnt'
-                # Воно повертає значення у вигляді десяткового дробу (напр., 0.05 для 5%), тому множимо на 100
-                price_change_percent = float(ticker.get('price_24h_pcnt', 0)) * 100
-
-                # Правильна назва поля для об'єму в USDT - 'turnover_24h'
-                quote_volume = float(ticker.get('turnover_24h', 0))
+                # --- ВИПРАВЛЕНА НАЗВА ПОЛЯ ---
+                price_change_percent = float(ticker.get('price24hPcnt', 0)) * 100
+                quote_volume = float(ticker.get('turnover24h', 0))
 
             if not symbol: continue
 
-            # Застосовуємо наші стандартні фільтри
             if quote_volume > 2000000 and abs(price_change_percent) > 5:
                 promising_coins.add(f"{adapter.name}:{symbol}")
 
@@ -603,23 +598,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                           reply_markup=reply_markup)
 
 
-# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ monitor НА ЦЮ ОНОВЛЕНУ ВЕРСІЮ ▼▼▼ ---
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ monitor НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 async def monitor(app):
     async with aiohttp.ClientSession() as session:
         while True:
             # --- КРОК 1: ЗАПУСКАЄМО СКАНЕР ДЛЯ КОЖНОЇ БІРЖІ ---
             all_promising_coins = set()
-            scanner_results_summary = []  # Створюємо список для зведення результатів сканера
+
+            # --- ▼▼▼ ЗМІНЕНО: Створюємо словник для зберігання результатів ▼▼▼ ---
+            scanner_results = {}
 
             for exchange_name, adapter in EXCHANGES.items():
                 promising_on_exchange = await run_market_scanner_for_exchange(session, adapter)
                 all_promising_coins.update(promising_on_exchange)
-                # Додаємо рядок у наше зведення
-                scanner_results_summary.append(
-                    f"• {exchange_name}: знайдено {len(promising_on_exchange)} активних монет.")
+                # Зберігаємо кількість знайдених монет для кожної біржі
+                scanner_results[exchange_name] = len(promising_on_exchange)
 
             # --- КРОК 2: АНАЛІЗУЄМО МОНЕТИ ТА НАДСИЛАЄМО СИГНАЛИ ---
-            # Ця частина залишається майже без змін
+            # Ця частина залишається без змін
             for user_id, user_tracked_coins in user_coins.items():
                 balances = await get_account_balance(session)
                 coins_to_analyze = {f"Binance:{coin}" for coin in user_tracked_coins} | all_promising_coins
@@ -627,7 +623,7 @@ async def monitor(app):
                 if not coins_to_analyze: continue
 
                 logger.info(f"Для користувача {user_id} аналізується {len(coins_to_analyze)} монет.")
-                signal_messages = []  # Перейменовуємо, щоб не плутати з повідомленням про сканування
+                signal_messages = []
 
                 for coin_identifier in coins_to_analyze:
                     exchange_name, symbol = coin_identifier.split(':')
@@ -649,27 +645,27 @@ async def monitor(app):
                             message += f"\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
                         signal_messages.append(message)
 
-                # Надсилаємо сильні сигнали, ЯКЩО вони є
                 if signal_messages:
                     try:
-                        full_message = "\n\n".join(signal_messages)
-                        # Це сповіщення буде гучним
-                        await app.bot.send_message(chat_id=user_id, text=full_message, parse_mode='Markdown')
+                        await app.bot.send_message(chat_id=user_id, text="\n\n".join(signal_messages),
+                                                   parse_mode='Markdown')
                     except Exception as e:
                         logger.error(f"Помилка відправки СИГНАЛУ {user_id}: {e}")
 
-            # --- КРОК 3: НАДСИЛАЄМО ІНФОРМАЦІЙНЕ ЗВЕДЕННЯ ВСІМ КОРИСТУВАЧАМ ---
-            if user_coins:  # Надсилаємо, тільки якщо є хоча б один активний користувач
+            # --- КРОК 3: НАДСИЛАЄМО НОВЕ, ДЕТАЛЬНЕ ЗВЕДЕННЯ ---
+            if user_coins:
+                # Формуємо рядок зі статистикою по кожній біржі
+                summary_lines = [f"• На **{name}** знайдено: **{count}** активних монет." for name, count in
+                                 scanner_results.items()]
+
                 summary_text = (
                         f"**📈 Результати планового сканування:**\n\n"
-                        + "\n".join(scanner_results_summary)
-                        + "\n\n*Бот продовжує моніторинг. Сильні сигнали `BUY` або `SELL` будуть надіслані окремим повідомленням.*"
+                        + "\n".join(summary_lines)
+                        + "\n\n*Бот продовжує моніторинг. Сигнали `BUY`/`SELL` будуть надіслані окремо.*"
                 )
 
-                # Проходимо по всіх користувачах і надсилаємо тихе сповіщення
                 for user_id in user_coins.keys():
                     try:
-                        # disable_notification=True робить сповіщення тихим
                         await app.bot.send_message(chat_id=user_id, text=summary_text, parse_mode='Markdown',
                                                    disable_notification=True)
                     except Exception as e:
@@ -677,7 +673,6 @@ async def monitor(app):
 
             logger.info("Цикл моніторингу завершено. Наступна перевірка за 15 хвилин.")
             await asyncio.sleep(900)
-
 
 # Основна функція (без змін)
 def main():
