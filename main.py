@@ -100,28 +100,46 @@ class ExchangeAdapter:
 
 
 # --- ▼▼▼ ЗАМІНІТЬ ВАШІ КЛАСИ-АДАПТЕРИ НА ЦІ ▼▼▼ ---
+# --- ▼▼▼ ЗАМІНІТЬ ВАШІ КЛАСИ-АДАПТЕРИ НА ЦІ ▼▼▼ ---
 class BinanceAdapter(ExchangeAdapter):
-    # ...
+    """Адаптер для біржі Binance."""
+
+    def __init__(self):
+        super().__init__()
+        self.name = "Binance"
+        self.base_url = "https://api.binance.com"
+
     async def get_klines(self, session, symbol, interval='1h', limit=100):
         url = f"{self.base_url}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
         async with session.get(url) as resp:
             raw_klines = await resp.json()
-            # Тепер format_klines_data отримує сирі дані
             return self.format_klines_data(raw_klines, symbol)
-    # ...
+
+    async def get_market_tickers(self, session):
+        url = f"{self.base_url}/api/v3/ticker/24hr"
+        async with session.get(url) as resp:
+            return await resp.json()
+
     def format_klines_data(self, data, symbol):
         if not isinstance(data, list) or not data:
             raise ValueError(f"Некоректні дані від Binance для {symbol}")
         return {
-            "raw_klines": data, # <--- НОВЕ ПОЛЕ
+            "raw_klines": data,  # <--- ПОВЕРТАЄМО СИРІ ДАНІ
             "exchange": self.name, "symbol": symbol,
             "closes": [float(k[4]) for k in data],
             "volumes": [float(k[5]) for k in data],
             "current_price": float(data[-1][4])
         }
 
+
 class BybitAdapter(ExchangeAdapter):
-    # ...
+    """Адаптер для біржі Bybit (використовує aiohttp для всіх запитів)."""
+
+    def __init__(self):
+        super().__init__()
+        self.name = "Bybit"
+        self.base_url = "https://api.bybit.com"
+
     async def get_klines(self, session, symbol, interval='60', limit=100):
         url = f"{self.base_url}/v5/market/kline"
         params = {"category": "spot", "symbol": symbol, "interval": interval, "limit": limit}
@@ -129,13 +147,20 @@ class BybitAdapter(ExchangeAdapter):
             data = await resp.json()
             raw_klines = data.get('result', {}).get('list', [])
             return self.format_klines_data(raw_klines, symbol)
-    # ...
+
+    async def get_market_tickers(self, session):
+        url = f"{self.base_url}/v5/market/tickers"
+        params = {"category": "spot"}
+        async with session.get(url, params=params) as resp:
+            data = await resp.json()
+            return data.get('result', {}).get('list', [])
+
     def format_klines_data(self, data, symbol):
         if not isinstance(data, list) or not data:
             raise ValueError(f"Некоректні дані від Bybit для {symbol}")
         data = data[::-1]
         return {
-            "raw_klines": data, # <--- НОВЕ ПОЛЕ
+            "raw_klines": data,  # <--- ПОВЕРТАЄМО СИРІ ДАНІ
             "exchange": self.name, "symbol": symbol,
             "closes": [float(k[4]) for k in data],
             "volumes": [float(k[5]) for k in data],
@@ -359,12 +384,14 @@ async def get_sentiment_analysis(session, asset_name):
 
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 async def analyze_coin(session, symbol, exchange_name, balances):
     try:
         adapter = EXCHANGES.get(exchange_name)
         if not adapter:
             raise ValueError(f"Адаптер для {exchange_name} не знайдено.")
 
+        # Отримуємо всі дані через АДАПТЕР, а не get_binance_data
         market_data = await adapter.get_klines(session, symbol)
 
         raw_klines = market_data["raw_klines"]
@@ -379,19 +406,22 @@ async def analyze_coin(session, symbol, exchange_name, balances):
         asset = symbol.replace("USDT", "")
         balance = balances.get(asset, 0)
 
+        # Аналіз свічних патернів
         candlestick_patterns = analyze_candlestick_patterns(raw_klines)
-        vader_score, news_text = await get_sentiment_analysis(session, asset)
 
-        # Збираємо всі дані в один словник для повернення
+        # Збираємо дані в один словник для повернення
         result_data = {
             "exchange": exchange_name, "symbol": symbol, "price": price, "rsi": rsi,
             "ema10": ema10, "ema50": ema50, "volume_trend": vol_trend,
-            "candlestick_patterns": candlestick_patterns, "vader_score": vader_score,
+            "candlestick_patterns": candlestick_patterns, "vader_score": 0,
             "balance": balance, "stop_loss": None, "take_profit": None,
-            "recommendation": "⚪️ NEUTRAL (Немає сильних сигналів)"  # Значення за замовчуванням
+            "recommendation": "⚪️ NEUTRAL (Немає сильних сигналів)"
         }
 
         # --- ЕТАП 1: ШВИДКИЙ ПОПЕРЕДНІЙ АНАЛІЗ ---
+        vader_score, news_text = await get_sentiment_analysis(session, asset)
+        result_data["vader_score"] = vader_score  # Зберігаємо vader score
+
         preliminary_signal = False
         if rsi < 35 and ema10 > ema50 and vol_trend == "зростає" and vader_score >= 0.1:
             preliminary_signal = True
@@ -399,10 +429,11 @@ async def analyze_coin(session, symbol, exchange_name, balances):
             preliminary_signal = True
 
         if not preliminary_signal:
-            return result_data  # Повертаємо всі зібрані дані, але з нейтральною рекомендацією
+            return result_data
 
         # --- ЕТАП 2: ГЛИБОКИЙ АНАЛІЗ (LLM) ---
-        logger.info(f"Попередній сигнал знайдено для {symbol}. Запускаю глибокий LLM-аналіз...")
+        logger.info(f"Попередній сигнал знайдено для {symbol} на {exchange_name}. Запускаю LLM-аналіз...")
+        # ... (решта коду з LLM і поверненням результату залишається без змін)
 
         if model is None:
             result_data["recommendation"] = "⚪️ NEUTRAL (AI model is not available.)"
@@ -425,7 +456,6 @@ async def analyze_coin(session, symbol, exchange_name, balances):
             logger.error(f"Помилка LLM-аналізу для {symbol}: {e}")
             llm_result = {"recommendation": "NEUTRAL", "reason": "Error during AI analysis."}
 
-        # Оновлюємо рекомендацію в нашому словнику
         if llm_result.get('recommendation') == "BUY" and llm_result.get('confidence') in ["MEDIUM", "HIGH"]:
             result_data["recommendation"] = f"🟢 BUY (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
             result_data["stop_loss"] = price * 0.98
