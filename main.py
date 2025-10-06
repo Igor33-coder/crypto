@@ -210,6 +210,7 @@ def calculate_ema(prices, period=10):
     return ema[-1]
 
 
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ run_market_scanner_for_exchange НА ЦЮ ▼▼▼ ---
 async def run_market_scanner_for_exchange(session, adapter):
     """
     Запускає сканер ринку для КОНКРЕТНОЇ біржі через її адаптер.
@@ -218,7 +219,6 @@ async def run_market_scanner_for_exchange(session, adapter):
     promising_coins = set()
 
     try:
-        # Цей рядок тепер буде працювати правильно для обох адаптерів
         all_tickers = await adapter.get_market_tickers(session)
 
         for ticker in all_tickers:
@@ -233,20 +233,22 @@ async def run_market_scanner_for_exchange(session, adapter):
                 quote_volume = float(ticker.get('quoteVolume', 0))
                 price_change_percent = float(ticker.get('priceChangePercent', 0))
 
+            # --- ▼▼▼ ОСЬ ВИПРАВЛЕНА ЛОГІКА ДЛЯ BYBIT ▼▼▼ ---
             elif adapter.name == "Bybit":
                 symbol = ticker.get('symbol')
                 if not symbol or not symbol.endswith('USDT'): continue
-                # Bybit повертає об'єм в базовій валюті, тому рахуємо його самі
-                turnover_24h = float(ticker.get('turnover24h', 0))
-                price_change_percent = float(ticker.get('priceChange24h', 0)) * 100
-                quote_volume = turnover_24h  # Для Bybit turnover24h це і є об'єм в USDT
+
+                # Правильна назва поля для зміни ціни - 'price_24h_pcnt'
+                # Воно повертає значення у вигляді десяткового дробу (напр., 0.05 для 5%), тому множимо на 100
+                price_change_percent = float(ticker.get('price_24h_pcnt', 0)) * 100
+
+                # Правильна назва поля для об'єму в USDT - 'turnover_24h'
+                quote_volume = float(ticker.get('turnover_24h', 0))
 
             if not symbol: continue
 
             # Застосовуємо наші стандартні фільтри
-            if (quote_volume > 2000000 and abs(price_change_percent) > 5):
-                # Додаємо до символу префікс біржі, щоб уникнути плутанини
-                # Наприклад: "Binance:BTCUSDT"
+            if quote_volume > 2000000 and abs(price_change_percent) > 5:
                 promising_coins.add(f"{adapter.name}:{symbol}")
 
         logger.info(f"Сканер знайшов {len(promising_coins)} перспективних монет на {adapter.name}.")
@@ -593,52 +595,42 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("📋 Твої монети (натисніть для глибокого аналізу на Binance):",
                                           reply_markup=reply_markup)
 
-# --- Оновлена функція моніторингу ---
-# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ monitor НА ЦЮ ▼▼▼ ---
+
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ monitor НА ЦЮ ОНОВЛЕНУ ВЕРСІЮ ▼▼▼ ---
 async def monitor(app):
     async with aiohttp.ClientSession() as session:
         while True:
             # --- КРОК 1: ЗАПУСКАЄМО СКАНЕР ДЛЯ КОЖНОЇ БІРЖІ ---
             all_promising_coins = set()
+            scanner_results_summary = []  # Створюємо список для зведення результатів сканера
+
             for exchange_name, adapter in EXCHANGES.items():
                 promising_on_exchange = await run_market_scanner_for_exchange(session, adapter)
                 all_promising_coins.update(promising_on_exchange)
+                # Додаємо рядок у наше зведення
+                scanner_results_summary.append(
+                    f"• {exchange_name}: знайдено {len(promising_on_exchange)} активних монет.")
 
-            if not all_promising_coins:
-                logger.info("Сканери не знайшли активних монет на жодній біржі.")
-
-            # --- КРОК 2: АНАЛІЗУЄМО МОНЕТИ ДЛЯ КОЖНОГО КОРИСТУВАЧА ---
+            # --- КРОК 2: АНАЛІЗУЄМО МОНЕТИ ТА НАДСИЛАЄМО СИГНАЛИ ---
+            # Ця частина залишається майже без змін
             for user_id, user_tracked_coins in user_coins.items():
-                balances = await get_account_balance(session)  # Баланс поки що тільки з Binance
-
-                # Об'єднуємо особистий список користувача та результати сканерів
-                # Важливо: особистий список поки що вважається списком для Binance
+                balances = await get_account_balance(session)
                 coins_to_analyze = {f"Binance:{coin}" for coin in user_tracked_coins} | all_promising_coins
 
                 if not coins_to_analyze: continue
 
-                logger.info(f"Для користувача {user_id} аналізується {len(coins_to_analyze)} монет з різних бірж.")
-                messages = []
+                logger.info(f"Для користувача {user_id} аналізується {len(coins_to_analyze)} монет.")
+                signal_messages = []  # Перейменовуємо, щоб не плутати з повідомленням про сканування
+
                 for coin_identifier in coins_to_analyze:
-                    # Розділяємо ідентифікатор на біржу та символ
                     exchange_name, symbol = coin_identifier.split(':')
-
                     analysis_data = await analyze_coin(session, symbol, exchange_name, balances)
-
-                    # Пауза, щоб не перевищити ліміти Gemini
                     await asyncio.sleep(2)
 
                     if analysis_data and (
                             "BUY" in analysis_data["recommendation"] or "SELL" in analysis_data["recommendation"]):
-
-                        # Перевіряємо, чи була монета в особистому списку
                         is_personal = f"Binance:{symbol}" in {f"Binance:{c}" for c in user_tracked_coins}
-
-                        if is_personal:
-                            alert_type = "🚨 **Сигнал по вашій монеті!** 🚨"
-                        else:
-                            alert_type = "🔥 **Сигнал зі сканера ринку!** 🔥"
-
+                        alert_type = "🚨 **Сигнал по вашій монеті!** 🚨" if is_personal else "🔥 **Сигнал зі сканера ринку!** 🔥"
                         message = (
                             f"{alert_type}\n\n"
                             f"**Біржа: `{analysis_data['exchange']}`**\n"
@@ -648,17 +640,36 @@ async def monitor(app):
                         )
                         if analysis_data.get("stop_loss"):
                             message += f"\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
-                        messages.append(message)
+                        signal_messages.append(message)
 
-                if messages:
+                # Надсилаємо сильні сигнали, ЯКЩО вони є
+                if signal_messages:
                     try:
-                        full_message = "\n\n".join(messages)
+                        full_message = "\n\n".join(signal_messages)
+                        # Це сповіщення буде гучним
                         await app.bot.send_message(chat_id=user_id, text=full_message, parse_mode='Markdown')
                     except Exception as e:
-                        logger.error(f"Помилка відправки {user_id}: {e}")
+                        logger.error(f"Помилка відправки СИГНАЛУ {user_id}: {e}")
+
+            # --- КРОК 3: НАДСИЛАЄМО ІНФОРМАЦІЙНЕ ЗВЕДЕННЯ ВСІМ КОРИСТУВАЧАМ ---
+            if user_coins:  # Надсилаємо, тільки якщо є хоча б один активний користувач
+                summary_text = (
+                        f"**📈 Результати планового сканування:**\n\n"
+                        + "\n".join(scanner_results_summary)
+                        + "\n\n*Бот продовжує моніторинг. Сильні сигнали `BUY` або `SELL` будуть надіслані окремим повідомленням.*"
+                )
+
+                # Проходимо по всіх користувачах і надсилаємо тихе сповіщення
+                for user_id in user_coins.keys():
+                    try:
+                        # disable_notification=True робить сповіщення тихим
+                        await app.bot.send_message(chat_id=user_id, text=summary_text, parse_mode='Markdown',
+                                                   disable_notification=True)
+                    except Exception as e:
+                        logger.error(f"Помилка відправки ЗВЕДЕННЯ {user_id}: {e}")
 
             logger.info("Цикл моніторингу завершено. Наступна перевірка за 15 хвилин.")
-            await asyncio.sleep(900)  # Інтервал 15 хвилин
+            await asyncio.sleep(900)
 
 
 # Основна функція (без змін)
