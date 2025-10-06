@@ -358,13 +358,13 @@ async def get_sentiment_analysis(session, asset_name):
 
 
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 async def analyze_coin(session, symbol, exchange_name, balances):
     try:
         adapter = EXCHANGES.get(exchange_name)
         if not adapter:
             raise ValueError(f"Адаптер для {exchange_name} не знайдено.")
 
-        # Отримуємо всі дані через адаптер
         market_data = await adapter.get_klines(session, symbol)
 
         raw_klines = market_data["raw_klines"]
@@ -379,12 +379,19 @@ async def analyze_coin(session, symbol, exchange_name, balances):
         asset = symbol.replace("USDT", "")
         balance = balances.get(asset, 0)
 
-        # Аналіз свічних патернів
         candlestick_patterns = analyze_candlestick_patterns(raw_klines)
-
-        # --- ЕТАП 1: ШВИДКИЙ ПОПЕРЕДНІЙ АНАЛІЗ ---
         vader_score, news_text = await get_sentiment_analysis(session, asset)
 
+        # Збираємо всі дані в один словник для повернення
+        result_data = {
+            "exchange": exchange_name, "symbol": symbol, "price": price, "rsi": rsi,
+            "ema10": ema10, "ema50": ema50, "volume_trend": vol_trend,
+            "candlestick_patterns": candlestick_patterns, "vader_score": vader_score,
+            "balance": balance, "stop_loss": None, "take_profit": None,
+            "recommendation": "⚪️ NEUTRAL (Немає сильних сигналів)"  # Значення за замовчуванням
+        }
+
+        # --- ЕТАП 1: ШВИДКИЙ ПОПЕРЕДНІЙ АНАЛІЗ ---
         preliminary_signal = False
         if rsi < 35 and ema10 > ema50 and vol_trend == "зростає" and vader_score >= 0.1:
             preliminary_signal = True
@@ -392,35 +399,21 @@ async def analyze_coin(session, symbol, exchange_name, balances):
             preliminary_signal = True
 
         if not preliminary_signal:
-            return {
-                "exchange": exchange_name,  # <--- ДОДАНО ЦЕЙ РЯДОК
-                "symbol": symbol, "price": price, "rsi": rsi,
-                "recommendation": "⚪️ NEUTRAL (Немає сильних сигналів)",
-                "balance": balance, "stop_loss": None, "take_profit": None
-            }
+            return result_data  # Повертаємо всі зібрані дані, але з нейтральною рекомендацією
 
-        # --- ЕТАП 2: ГЛИБОКИЙ АНАЛІЗ (LLM), ЯКЩО Є СИГНАЛ ---
+        # --- ЕТАП 2: ГЛИБОКИЙ АНАЛІЗ (LLM) ---
         logger.info(f"Попередній сигнал знайдено для {symbol}. Запускаю глибокий LLM-аналіз...")
 
         if model is None:
-            return {"recommendation": "NEUTRAL", "reason": "AI model is not available."}
+            result_data["recommendation"] = "⚪️ NEUTRAL (AI model is not available.)"
+            return result_data
 
-        # --- ▼▼▼ ОНОВЛЕНИЙ ПРОМПТ ДЛЯ GEMINI ▼▼▼ ---
         prompt = f"""
-        You are an expert crypto market analyst. Analyze the following data for {symbol} and provide a trading recommendation.
-
-        Technical Indicators:
-        - RSI: {rsi:.2f}
-        - EMA Trend: {'Bullish' if ema10 > ema50 else 'Bearish'}
-        - Volume Trend: {vol_trend}
-
-        Candlestick Patterns found on the last candle:
-        - {candlestick_patterns}
-
-        Recent News and Discussions:
-        {news_text}
-
-        Based on the synthesis of ALL the above information, provide your analysis as a single JSON object:
+        You are an expert crypto market analyst. Analyze the following data for {symbol} on {exchange_name} and provide a trading recommendation.
+        Technical Indicators: - RSI: {rsi:.2f} - EMA Trend: {'Bullish' if ema10 > ema50 else 'Bearish'} - Volume Trend: {vol_trend}
+        Candlestick Patterns found on the last candle: - {candlestick_patterns}
+        Recent News and Discussions: {news_text}
+        Based on all information, provide your analysis as a single JSON object:
         {{"recommendation": "BUY" or "SELL" or "NEUTRAL", "confidence": "LOW" or "MEDIUM" or "HIGH", "reason": "Brief explanation."}}
         """
 
@@ -432,26 +425,23 @@ async def analyze_coin(session, symbol, exchange_name, balances):
             logger.error(f"Помилка LLM-аналізу для {symbol}: {e}")
             llm_result = {"recommendation": "NEUTRAL", "reason": "Error during AI analysis."}
 
-        # Формуємо фінальний результат на основі відповіді LLM
-        recommendation = f"⚪️ NEUTRAL ({llm_result.get('reason', 'N/A')})"
-        stop_loss, take_profit = None, None
-
+        # Оновлюємо рекомендацію в нашому словнику
         if llm_result.get('recommendation') == "BUY" and llm_result.get('confidence') in ["MEDIUM", "HIGH"]:
-            recommendation = f"🟢 BUY (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
-            stop_loss = price * 0.98
-            take_profit = price * 1.05
+            result_data["recommendation"] = f"🟢 BUY (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
+            result_data["stop_loss"] = price * 0.98
+            result_data["take_profit"] = price * 1.05
         elif llm_result.get('recommendation') == "SELL" and llm_result.get('confidence') in ["MEDIUM", "HIGH"]:
-            recommendation = f"🔴 SELL (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
+            result_data["recommendation"] = f"🔴 SELL (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
+        else:
+            result_data["recommendation"] = f"⚪️ NEUTRAL ({llm_result.get('reason', 'N/A')})"
 
-        return {
-            "symbol": symbol, "price": price, "rsi": rsi,
-            "recommendation": recommendation,
-            "balance": balance,
-            "stop_loss": stop_loss, "take_profit": take_profit
-        }
+        return result_data
 
+    except ValueError as e:
+        logger.warning(f"Не вдалося отримати дані для {symbol} на {exchange_name}. Помилка: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Помилка аналізу {symbol}: {e}")
+        logger.error(f"Неочікувана помилка аналізу {symbol} на {exchange_name}: {e}")
         return None
 
 # --- Функції start та monitor залишаються майже без змін, але ми оновимо текст повідомлень в них ---
@@ -538,7 +528,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("📋 **Твої монети** (натисніть для глибокого аналізу):",
                                           reply_markup=reply_markup, parse_mode='Markdown')
 
-        # --- БЛОК АНАЛІЗУ КОНКРЕТНОЇ МОНЕТИ (ОНОВЛЕНИЙ) ---
+            # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ЦЕЙ БЛОК У ВАШОМУ button_handler ▼▼▼ ---
         elif query.data.startswith("analyze_"):
             coin_identifier = query.data.replace("analyze_", "")
             try:
@@ -561,14 +551,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                               reply_markup=reply_markup)
                 return
 
+            # --- Формуємо нову, детальну аналітичну картку ---
+
+            # Допоміжні рядки для красивого виводу
+            rsi = analysis_data.get('rsi', 0)
+            rsi_text = f"{rsi:.2f}"
+            if rsi < 30:
+                rsi_text += " (зона перепроданості)"
+            elif rsi > 70:
+                rsi_text += " (зона перекупленості)"
+
+            ema10 = analysis_data.get('ema10', 0)
+            ema50 = analysis_data.get('ema50', 0)
+            ema_text = "Висхідний (EMA10 > EMA50)" if ema10 > ema50 else "Низхідний (EMA10 < EMA50)"
+
+            vader = analysis_data.get('vader_score', 0)
+            vader_text = f"{vader:.2f}"
+            if vader >= 0.1:
+                vader_text += " (Позитивний)"
+            elif vader <= -0.1:
+                vader_text += " (Негативний)"
+            else:
+                vader_text += " (Нейтральний)"
+
             message = (
                 f"📊 **{analysis_data.get('exchange')} | {analysis_data.get('symbol')}**\n\n"
-                f"💰 Поточна ціна: `{analysis_data.get('price', 0):.6f}`\n"
-                f"📈 RSI: `{analysis_data.get('rsi', 0):.2f}`\n\n"
-                f"📌 **Сигнал від ШІ:** {analysis_data.get('recommendation', 'Помилка')}"
+                f"💰 **Поточна ціна:** `{analysis_data.get('price', 0):.6f}`\n"
+                f"💵 **Ваш баланс:** `{analysis_data.get('balance', 0)}`\n\n"
+                f"📌 **Вердикт ШІ (Gemini):** {analysis_data.get('recommendation', 'Помилка')}\n\n"
+                f"--- **Технічний аналіз (1h)** ---\n"
+                f"📈 **RSI:** `{rsi_text}`\n"
+                f"📊 **EMA Trend:** `{ema_text}`\n"
+                f"🔊 **Тренд об'єму:** `{analysis_data.get('volume_trend', 'N/A')}`\n"
+                f"🕯️ **Свічні патерни:** `{analysis_data.get('candlestick_patterns', 'N/A')}`\n\n"
+                f"--- **Аналіз настроїв** ---\n"
+                f"📰 **VADER Score:** `{vader_text}`"
             )
+
             if analysis_data.get("stop_loss"):
-                message += f"\n\n**Пропонований план:**\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
+                message += (
+                    f"\n\n**Пропонований план:**\n"
+                    f"🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n"
+                    f"🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
+                )
 
             await query.edit_message_text(text=message, reply_markup=reply_markup, parse_mode='Markdown')
 
@@ -614,10 +639,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # --- РЕШТА БЛОКІВ БЕЗ ЗМІН ---
         elif query.data == "back_to_start":
-            keyboard = [[InlineKeyboardButton("🔍 Сканер ринку", callback_data="market_scanner")],
-                        [InlineKeyboardButton("➕ Додати монету", callback_data="add")],
-                        [InlineKeyboardButton("➖ Видалити монету", callback_data="remove")],
-                        [InlineKeyboardButton("📋 Мої монети", callback_data="mycoins")], ]
+            keyboard = [[InlineKeyboardButton("🔍 Сканер ринку 🔍", callback_data="market_scanner")],
+                        [InlineKeyboardButton("➕ Додати монету ➕", callback_data="add")],
+                        [InlineKeyboardButton("➖ Видалити монету ➖", callback_data="remove")],
+                        [InlineKeyboardButton("📋 Мої монети 📋", callback_data="mycoins")], ]
             await query.edit_message_text(f"Привіт 👋! Я твій крипто-помічник.",
                                           reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         elif query.data == "add":
