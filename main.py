@@ -9,7 +9,8 @@ import hmac
 import hashlib
 import google.generativeai as genai
 import json
-from pybit.unified_trading import HTTP
+import pandas as pd
+import pandas_ta as ta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -98,76 +99,43 @@ class ExchangeAdapter:
         raise NotImplementedError("Метод format_klines_data має бути реалізований.")
 
 
+# --- ▼▼▼ ЗАМІНІТЬ ВАШІ КЛАСИ-АДАПТЕРИ НА ЦІ ▼▼▼ ---
 class BinanceAdapter(ExchangeAdapter):
-    """Адаптер для біржі Binance."""
-
-    def __init__(self):
-        super().__init__()
-        self.name = "Binance"
-        self.base_url = "https://api.binance.com"
-
+    # ...
     async def get_klines(self, session, symbol, interval='1h', limit=100):
         url = f"{self.base_url}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
         async with session.get(url) as resp:
-            data = await resp.json()
-            return self.format_klines_data(data, symbol)
-
-    async def get_market_tickers(self, session):
-        url = f"{self.base_url}/api/v3/ticker/24hr"
-        async with session.get(url) as resp:
-            return await resp.json()
-
+            raw_klines = await resp.json()
+            # Тепер format_klines_data отримує сирі дані
+            return self.format_klines_data(raw_klines, symbol)
+    # ...
     def format_klines_data(self, data, symbol):
         if not isinstance(data, list) or not data:
             raise ValueError(f"Некоректні дані від Binance для {symbol}")
         return {
-            "exchange": self.name,
-            "symbol": symbol,
+            "raw_klines": data, # <--- НОВЕ ПОЛЕ
+            "exchange": self.name, "symbol": symbol,
             "closes": [float(k[4]) for k in data],
             "volumes": [float(k[5]) for k in data],
             "current_price": float(data[-1][4])
         }
 
-
-# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШ КЛАС BybitAdapter НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 class BybitAdapter(ExchangeAdapter):
-    """Адаптер для біржі Bybit (використовує aiohttp для всіх запитів)."""
-
-    def __init__(self):
-        super().__init__()
-        self.name = "Bybit"
-        self.base_url = "https://api.bybit.com"
-
+    # ...
     async def get_klines(self, session, symbol, interval='60', limit=100):
-        # Bybit використовує інший ендпоінт для klines
         url = f"{self.base_url}/v5/market/kline"
-        params = {
-            "category": "spot",
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit
-        }
+        params = {"category": "spot", "symbol": symbol, "interval": interval, "limit": limit}
         async with session.get(url, params=params) as resp:
             data = await resp.json()
-            return self.format_klines_data(data.get('result', {}).get('list', []), symbol)
-
-    async def get_market_tickers(self, session):
-        # Використовуємо ендпоінт v5, як у документації
-        url = f"{self.base_url}/v5/market/tickers"
-        params = {"category": "spot"}
-        async with session.get(url, params=params) as resp:
-            data = await resp.json()
-            # Повертаємо список тикерів
-            return data.get('result', {}).get('list', [])
-
+            raw_klines = data.get('result', {}).get('list', [])
+            return self.format_klines_data(raw_klines, symbol)
+    # ...
     def format_klines_data(self, data, symbol):
         if not isinstance(data, list) or not data:
             raise ValueError(f"Некоректні дані від Bybit для {symbol}")
-
-        # Дані йдуть від нових до старих, перевертаємо їх
         data = data[::-1]
-        # Новий API v5 повертає дані [startTime, open, high, low, close, volume, turnover]
         return {
+            "raw_klines": data, # <--- НОВЕ ПОЛЕ
             "exchange": self.name, "symbol": symbol,
             "closes": [float(k[4]) for k in data],
             "volumes": [float(k[5]) for k in data],
@@ -214,6 +182,46 @@ def calculate_ema(prices, period=10):
     return ema[-1]
 
 
+# --- ▼▼▼ НОВА ФУНКЦІЯ ДЛЯ АНАЛІЗУ СВІЧНИХ ПАТЕРНІВ ▼▼▼ ---
+def analyze_candlestick_patterns(klines_data):
+    """
+    Аналізує дані свічок і шукає відомі патерни на останніх свічках.
+    """
+    if not klines_data or len(klines_data) < 20:  # Потрібно достатньо даних для аналізу
+        return "Недостатньо даних для аналізу патернів."
+
+    # Створюємо DataFrame з даними
+    df = pd.DataFrame(klines_data, columns=[
+        'open_time', 'open', 'high', 'low', 'close', 'volume',
+        'close_time', 'quote_asset_volume', 'number_of_trades',
+        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+    ])
+
+    # Конвертуємо стовпці у числовий формат
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        df[col] = pd.to_numeric(df[col])
+
+    # Використовуємо pandas_ta для пошуку ВСІХ патернів
+    df.ta.cdl_pattern(name="all", append=True)
+
+    # Шукаємо патерни на останній свічці.
+    # `ta.cdl_pattern` створює стовпці з назвою патерну (напр., CDL_HAMMER).
+    # Значення 100 означає бичачий патерн, -100 - ведмежий.
+    last_candle = df.iloc[-1]
+    found_patterns = []
+    for col in df.columns:
+        if col.startswith('CDL_'):
+            if last_candle[col] != 0:
+                pattern_name = col.replace('CDL_', '').replace('_', ' ').title()
+                direction = "Bullish" if last_candle[col] > 0 else "Bearish"
+                found_patterns.append(f"{direction} {pattern_name}")
+
+    if not found_patterns:
+        return "Жодних значущих патернів не знайдено."
+
+    return ", ".join(found_patterns)
+
+
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ run_market_scanner_for_exchange НА ЦЮ ▼▼▼ ---
 async def run_market_scanner_for_exchange(session, adapter):
     """
@@ -224,10 +232,6 @@ async def run_market_scanner_for_exchange(session, adapter):
 
     try:
         all_tickers = await adapter.get_market_tickers(session)
-
-        # Видаляємо рядок для налагодження, він нам більше не потрібен
-        # if adapter.name == "Bybit" and all_tickers:
-        #     logger.info(f"DEBUG BYBIT TICKER: {all_tickers[0]}")
 
         for ticker in all_tickers:
             symbol = None
@@ -353,19 +357,17 @@ async def get_sentiment_analysis(session, asset_name):
     return sentiment_score, full_text
 
 
-# --- ▼▼▼ ТРОХИ ОНОВІТЬ ФУНКЦІЮ analyze_coin ▼▼▼ ---
-# Повністю замініть вашу стару функцію analyze_coin на цю
-# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ НОВУ ВЕРСІЮ ▼▼▼ ---
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 async def analyze_coin(session, symbol, exchange_name, balances):
     try:
-        # Отримуємо адаптер за назвою біржі
         adapter = EXCHANGES.get(exchange_name)
         if not adapter:
-            raise ValueError(f"Адаптер для біржі {exchange_name} не знайдено.")
+            raise ValueError(f"Адаптер для {exchange_name} не знайдено.")
 
-        # Отримуємо дані через адаптер
+        # Отримуємо всі дані через адаптер
         market_data = await adapter.get_klines(session, symbol)
 
+        raw_klines = market_data["raw_klines"]
         closes = market_data["closes"]
         volumes = market_data["volumes"]
         price = market_data["current_price"]
@@ -377,7 +379,10 @@ async def analyze_coin(session, symbol, exchange_name, balances):
         asset = symbol.replace("USDT", "")
         balance = balances.get(asset, 0)
 
-        # --- ЕТАП 1: ШВИДКИЙ ПОПЕРЕДНІЙ АНАЛІЗ (VADER) ---
+        # Аналіз свічних патернів
+        candlestick_patterns = analyze_candlestick_patterns(raw_klines)
+
+        # --- ЕТАП 1: ШВИДКИЙ ПОПЕРЕДНІЙ АНАЛІЗ ---
         vader_score, news_text = await get_sentiment_analysis(session, asset)
 
         preliminary_signal = False
@@ -388,25 +393,37 @@ async def analyze_coin(session, symbol, exchange_name, balances):
 
         if not preliminary_signal:
             return {
-                "exchange": exchange_name, "symbol": symbol, "price": price, "rsi": rsi,
+                "exchange": exchange_name,  # <--- ДОДАНО ЦЕЙ РЯДОК
+                "symbol": symbol, "price": price, "rsi": rsi,
                 "recommendation": "⚪️ NEUTRAL (Немає сильних сигналів)",
                 "balance": balance, "stop_loss": None, "take_profit": None
             }
 
-        # --- ЕТАП 2: ГЛИБОКИЙ АНАЛІЗ (LLM) ---
-        logger.info(f"Попередній сигнал знайдено для {symbol} на {exchange_name}. Запускаю LLM-аналіз...")
+        # --- ЕТАП 2: ГЛИБОКИЙ АНАЛІЗ (LLM), ЯКЩО Є СИГНАЛ ---
+        logger.info(f"Попередній сигнал знайдено для {symbol}. Запускаю глибокий LLM-аналіз...")
 
         if model is None:
             return {"recommendation": "NEUTRAL", "reason": "AI model is not available."}
 
-        # ... (решта логіки з LLM залишається без змін)
+        # --- ▼▼▼ ОНОВЛЕНИЙ ПРОМПТ ДЛЯ GEMINI ▼▼▼ ---
         prompt = f"""
-        You are an expert crypto market analyst. Analyze the following data for {symbol} on {exchange_name} and provide a trading recommendation.
-        Technical Indicators: - RSI: {rsi:.2f} - EMA Trend: {'Bullish' if ema10 > ema50 else 'Bearish'} - Volume Trend: {vol_trend}
-        Recent News and Discussions: {news_text}
-        Based on all information, provide your analysis as a single JSON object:
+        You are an expert crypto market analyst. Analyze the following data for {symbol} and provide a trading recommendation.
+
+        Technical Indicators:
+        - RSI: {rsi:.2f}
+        - EMA Trend: {'Bullish' if ema10 > ema50 else 'Bearish'}
+        - Volume Trend: {vol_trend}
+
+        Candlestick Patterns found on the last candle:
+        - {candlestick_patterns}
+
+        Recent News and Discussions:
+        {news_text}
+
+        Based on the synthesis of ALL the above information, provide your analysis as a single JSON object:
         {{"recommendation": "BUY" or "SELL" or "NEUTRAL", "confidence": "LOW" or "MEDIUM" or "HIGH", "reason": "Brief explanation."}}
         """
+
         try:
             response = await model.generate_content_async(prompt)
             cleaned_response = response.text.replace("```json", "").replace("```", "").strip()
@@ -415,8 +432,10 @@ async def analyze_coin(session, symbol, exchange_name, balances):
             logger.error(f"Помилка LLM-аналізу для {symbol}: {e}")
             llm_result = {"recommendation": "NEUTRAL", "reason": "Error during AI analysis."}
 
+        # Формуємо фінальний результат на основі відповіді LLM
         recommendation = f"⚪️ NEUTRAL ({llm_result.get('reason', 'N/A')})"
         stop_loss, take_profit = None, None
+
         if llm_result.get('recommendation') == "BUY" and llm_result.get('confidence') in ["MEDIUM", "HIGH"]:
             recommendation = f"🟢 BUY (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
             stop_loss = price * 0.98
@@ -425,27 +444,14 @@ async def analyze_coin(session, symbol, exchange_name, balances):
             recommendation = f"🔴 SELL (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
 
         return {
-            "exchange": exchange_name, "symbol": symbol, "price": price, "rsi": rsi,
-            "recommendation": recommendation, "balance": balance,
+            "symbol": symbol, "price": price, "rsi": rsi,
+            "recommendation": recommendation,
+            "balance": balance,
             "stop_loss": stop_loss, "take_profit": take_profit
         }
 
-
-    except ValueError as e:
-
-        # Це очікувана помилка, якщо монети немає на біржі. Логуємо як попередження.
-
-        logger.warning(
-            f"Не вдалося отримати дані для {symbol} на {exchange_name}. Можливо, монета не торгується. Помилка: {e}")
-
-        return None
-
     except Exception as e:
-
-        # Це вже неочікувана, серйозна помилка. Логуємо як ERROR.
-
-        logger.error(f"Неочікувана помилка аналізу {symbol} на {exchange_name}: {e}")
-
+        logger.error(f"Помилка аналізу {symbol}: {e}")
         return None
 
 # --- Функції start та monitor залишаються майже без змін, але ми оновимо текст повідомлень в них ---
