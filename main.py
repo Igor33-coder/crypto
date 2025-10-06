@@ -9,6 +9,7 @@ import hmac
 import hashlib
 import google.generativeai as genai
 import json
+from pybit.aiohttp import KlineHTTP
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -72,6 +73,103 @@ except Exception as e:
 # Ініціалізація клієнтів
 sia = SentimentIntensityAnalyzer()
 # --------------------------
+
+# --------------------------
+# --- АРХІТЕКТУРА АДАПТЕРІВ ДЛЯ БІРЖ ---
+# --------------------------
+
+class ExchangeAdapter:
+    """Базовий клас-шаблон для всіх бірж."""
+
+    def __init__(self):
+        self.name = "Unknown"
+        self.session = None
+
+    async def get_klines(self, symbol, interval, limit):
+        """Метод для отримання 'свічок' (klines). Має бути реалізований кожним нащадком."""
+        raise NotImplementedError("Метод get_klines має бути реалізований.")
+
+    async def get_market_tickers(self, session):
+        """Метод для отримання даних для сканера ринку."""
+        raise NotImplementedError("Метод get_market_tickers має бути реалізований.")
+
+    def format_klines_data(self, data, symbol):
+        """Перетворює унікальні дані біржі у наш стандартний формат."""
+        raise NotImplementedError("Метод format_klines_data має бути реалізований.")
+
+
+class BinanceAdapter(ExchangeAdapter):
+    """Адаптер для біржі Binance."""
+
+    def __init__(self):
+        super().__init__()
+        self.name = "Binance"
+        self.base_url = "https://api.binance.com"
+
+    async def get_klines(self, session, symbol, interval='1h', limit=100):
+        url = f"{self.base_url}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        async with session.get(url) as resp:
+            data = await resp.json()
+            return self.format_klines_data(data, symbol)
+
+    async def get_market_tickers(self, session):
+        url = f"{self.base_url}/api/v3/ticker/24hr"
+        async with session.get(url) as resp:
+            return await resp.json()
+
+    def format_klines_data(self, data, symbol):
+        if not isinstance(data, list) or not data:
+            raise ValueError(f"Некоректні дані від Binance для {symbol}")
+        return {
+            "exchange": self.name,
+            "symbol": symbol,
+            "closes": [float(k[4]) for k in data],
+            "volumes": [float(k[5]) for k in data],
+            "current_price": float(data[-1][4])
+        }
+
+
+class BybitAdapter(ExchangeAdapter):
+    """Адаптер для біржі Bybit."""
+
+    def __init__(self):
+        super().__init__()
+        self.name = "Bybit"
+        # Для публічних даних (як klines) ключ не потрібен
+        self.client = KlineHTTP(testnet=False)
+        self.base_url = "https://api.bybit.com"
+
+    async def get_klines(self, session, symbol, interval='60', limit=100):  # '60' хвилин = 1 година
+        # pybit використовує свій власний http клієнт, тому наш `session` не потрібен
+        response = await self.client.get_kline(symbol=symbol, interval=interval, limit=limit)
+        return self.format_klines_data(response.get('result', []), symbol)
+
+    async def get_market_tickers(self, session):
+        url = f"{self.base_url}/v2/public/tickers"
+        async with session.get(url) as resp:
+            data = await resp.json()
+            return data.get('result', [])
+
+    def format_klines_data(self, data, symbol):
+        if not isinstance(data, list) or not data:
+            raise ValueError(f"Некоректні дані від Bybit для {symbol}")
+        # Bybit повертає дані від нових до старих, перевертаємо їх
+        data = data[::-1]
+        return {
+            "exchange": self.name,
+            "symbol": symbol,
+            "closes": [float(k['close']) for k in data],
+            "volumes": [float(k['volume']) for k in data],
+            "current_price": float(data[-1]['close'])
+        }
+
+
+# Створюємо словник з нашими адаптерами для легкого доступу
+EXCHANGES = {
+    "Binance": BinanceAdapter(),
+    "Bybit": BybitAdapter()
+}
+# ----------------------------------------------------
 
 user_coins = {}
 PAGE_SIZE = 30
@@ -183,16 +281,6 @@ def build_coin_keyboard(coins, page, action, all_count):
     return InlineKeyboardMarkup(keyboard)
 
 
-async def get_binance_data(session, symbol="DOGEUSDT", interval="1h", limit=100):
-    url = f"{BASE_URL}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    async with session.get(url) as resp:
-        data = await resp.json()
-    closes = [float(k[4]) for k in data]
-    volumes = [float(k[5]) for k in data]
-    price = float(data[-1][4])
-    return closes, volumes, price
-
-
 async def get_account_balance(session):
     try:
         timestamp = int(time.time() * 1000)
@@ -245,9 +333,21 @@ async def get_sentiment_analysis(session, asset_name):
 
 # --- ▼▼▼ ТРОХИ ОНОВІТЬ ФУНКЦІЮ analyze_coin ▼▼▼ ---
 # Повністю замініть вашу стару функцію analyze_coin на цю
-async def analyze_coin(session, symbol, balances):
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ НОВУ ВЕРСІЮ ▼▼▼ ---
+async def analyze_coin(session, symbol, exchange_name, balances):
     try:
-        closes, volumes, price = await get_binance_data(session, symbol)
+        # Отримуємо адаптер за назвою біржі
+        adapter = EXCHANGES.get(exchange_name)
+        if not adapter:
+            raise ValueError(f"Адаптер для біржі {exchange_name} не знайдено.")
+
+        # Отримуємо дані через адаптер
+        market_data = await adapter.get_klines(session, symbol)
+
+        closes = market_data["closes"]
+        volumes = market_data["volumes"]
+        price = market_data["current_price"]
+
         rsi = calculate_rsi(np.array(closes))
         ema10 = calculate_ema(np.array(closes), 10)
         ema50 = calculate_ema(np.array(closes), 50)
@@ -255,7 +355,7 @@ async def analyze_coin(session, symbol, balances):
         asset = symbol.replace("USDT", "")
         balance = balances.get(asset, 0)
 
-        # --- ЕТАП 1: ШВИДКИЙ ПОПЕРЕДНІЙ АНАЛІЗ ---
+        # --- ЕТАП 1: ШВИДКИЙ ПОПЕРЕДНІЙ АНАЛІЗ (VADER) ---
         vader_score, news_text = await get_sentiment_analysis(session, asset)
 
         preliminary_signal = False
@@ -266,30 +366,25 @@ async def analyze_coin(session, symbol, balances):
 
         if not preliminary_signal:
             return {
-                "symbol": symbol, "price": price, "rsi": rsi,
+                "exchange": exchange_name, "symbol": symbol, "price": price, "rsi": rsi,
                 "recommendation": "⚪️ NEUTRAL (Немає сильних сигналів)",
                 "balance": balance, "stop_loss": None, "take_profit": None
             }
 
-        # --- ЕТАП 2: ГЛИБОКИЙ АНАЛІЗ (LLM), ЯКЩО Є СИГНАЛ ---
-        logger.info(f"Попередній сигнал знайдено для {symbol}. Запускаю глибокий LLM-аналіз...")
+        # --- ЕТАП 2: ГЛИБОКИЙ АНАЛІЗ (LLM) ---
+        logger.info(f"Попередній сигнал знайдено для {symbol} на {exchange_name}. Запускаю LLM-аналіз...")
 
         if model is None:
-            logger.warning("Модель Gemini не ініціалізована. Пропускаю LLM-аналіз.")
             return {"recommendation": "NEUTRAL", "reason": "AI model is not available."}
 
+        # ... (решта логіки з LLM залишається без змін)
         prompt = f"""
-        You are an expert crypto market analyst. Analyze the following data for {symbol} and provide a trading recommendation.
-        Technical Indicators:
-        - RSI: {rsi:.2f}
-        - EMA Trend: {'Bullish' if ema10 > ema50 else 'Bearish'}
-        - Volume Trend: {vol_trend}
-        Recent News and Discussions:
-        {news_text}
+        You are an expert crypto market analyst. Analyze the following data for {symbol} on {exchange_name} and provide a trading recommendation.
+        Technical Indicators: - RSI: {rsi:.2f} - EMA Trend: {'Bullish' if ema10 > ema50 else 'Bearish'} - Volume Trend: {vol_trend}
+        Recent News and Discussions: {news_text}
         Based on all information, provide your analysis as a single JSON object:
         {{"recommendation": "BUY" or "SELL" or "NEUTRAL", "confidence": "LOW" or "MEDIUM" or "HIGH", "reason": "Brief explanation."}}
         """
-
         try:
             response = await model.generate_content_async(prompt)
             cleaned_response = response.text.replace("```json", "").replace("```", "").strip()
@@ -298,10 +393,8 @@ async def analyze_coin(session, symbol, balances):
             logger.error(f"Помилка LLM-аналізу для {symbol}: {e}")
             llm_result = {"recommendation": "NEUTRAL", "reason": "Error during AI analysis."}
 
-        # Формуємо фінальний результат на основі відповіді LLM
         recommendation = f"⚪️ NEUTRAL ({llm_result.get('reason', 'N/A')})"
         stop_loss, take_profit = None, None
-
         if llm_result.get('recommendation') == "BUY" and llm_result.get('confidence') in ["MEDIUM", "HIGH"]:
             recommendation = f"🟢 BUY (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
             stop_loss = price * 0.98
@@ -310,14 +403,13 @@ async def analyze_coin(session, symbol, balances):
             recommendation = f"🔴 SELL (Підтверджено ШІ. Впевненість: {llm_result.get('confidence')})"
 
         return {
-            "symbol": symbol, "price": price, "rsi": rsi,
-            "recommendation": recommendation,
-            "balance": balance,
+            "exchange": exchange_name, "symbol": symbol, "price": price, "rsi": rsi,
+            "recommendation": recommendation, "balance": balance,
             "stop_loss": stop_loss, "take_profit": take_profit
         }
 
     except Exception as e:
-        logger.error(f"Помилка аналізу {symbol}: {e}")
+        logger.error(f"Помилка аналізу {symbol} на {exchange_name}: {e}")
         return None
 
 # --- Функції start та monitor залишаються майже без змін, але ми оновимо текст повідомлень в них ---
@@ -426,7 +518,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"⏳ Роблю глибокий аналіз {coin} за допомогою ШІ...")
 
             balances = await get_account_balance(session)
-            analysis_data = await analyze_coin(session, coin, balances)
+            analysis_data = await analyze_coin(session, coin, "Binance", balances)
 
             keyboard = [
                 [InlineKeyboardButton("⬅️ До списку", callback_data="mycoins")],
@@ -440,10 +532,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Новий формат повідомлення, який відповідає новій структурі даних
             message = (
-                f"📊 **{analysis_data['symbol']}**\n\n"
-                f"💰 Поточна ціна: `{analysis_data['price']:.6f}`\n"
-                f"📈 RSI: `{analysis_data['rsi']:.2f}`\n\n"
-                f"📌 **Сигнал від ШІ (Gemini):** {analysis_data['recommendation']}"
+                f"📊 **{analysis_data.get('exchange', '')} | {analysis_data.get('symbol', '')}**\n\n"
+                f"💰 Поточна ціна: `{analysis_data.get('price', 0):.6f}`\n"
+                f"📈 RSI: `{analysis_data.get('rsi', 0):.2f}`\n\n"
+                f"📌 **Сигнал від ШІ:** {analysis_data.get('recommendation', 'Помилка')}"
             )
 
             if analysis_data.get("stop_loss"):
