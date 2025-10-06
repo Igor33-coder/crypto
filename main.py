@@ -129,37 +129,44 @@ class BinanceAdapter(ExchangeAdapter):
         }
 
 
-# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ КЛАС BybitAdapter НА ЦЮ ВЕРСІЮ ▼▼▼ ---
-# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШ КЛАС BybitAdapter НА ЦЮ ВЕРСІЮ ▼▼▼ ---
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШ КЛАС BybitAdapter НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 class BybitAdapter(ExchangeAdapter):
-    """Адаптер для біржі Bybit."""
+    """Адаптер для біржі Bybit (використовує aiohttp для всіх запитів)."""
 
     def __init__(self):
         super().__init__()
         self.name = "Bybit"
-        # Ініціалізуємо асинхронний HTTP клієнт
-        self.client = HTTP(testnet=False)
         self.base_url = "https://api.bybit.com"
 
     async def get_klines(self, session, symbol, interval='60', limit=100):
-        response = await self.client.get_kline(
-            category="spot", symbol=symbol, interval=interval, limit=limit
-        )
-        return self.format_klines_data(response.get('result', {}).get('list', []), symbol)
+        # Bybit використовує інший ендпоінт для klines
+        url = f"{self.base_url}/v5/market/kline"
+        params = {
+            "category": "spot",
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit
+        }
+        async with session.get(url, params=params) as resp:
+            data = await resp.json()
+            return self.format_klines_data(data.get('result', {}).get('list', []), symbol)
 
-    # --- ВИПРАВЛЕННЯ ТУТ ---
-    # Метод тепер правильно використовує `await` для отримання даних
-    # і повертає результат
     async def get_market_tickers(self, session):
-        # session тут не використовується, бо pybit має свій клієнт
-        response = await self.client.get_tickers(category="spot")
-        return response.get('result', {}).get('list', [])
+        # Використовуємо ендпоінт v5, як у документації
+        url = f"{self.base_url}/v5/market/tickers"
+        params = {"category": "spot"}
+        async with session.get(url, params=params) as resp:
+            data = await resp.json()
+            # Повертаємо список тикерів
+            return data.get('result', {}).get('list', [])
 
     def format_klines_data(self, data, symbol):
         if not isinstance(data, list) or not data:
             raise ValueError(f"Некоректні дані від Bybit для {symbol}")
-        # Новий API повертає дані [startTime, open, high, low, close, volume, turnover]
-        # Перевертати більше не потрібно, дані вже йдуть від старих до нових.
+
+        # Дані йдуть від нових до старих, перевертаємо їх
+        data = data[::-1]
+        # Новий API v5 повертає дані [startTime, open, high, low, close, volume, turnover]
         return {
             "exchange": self.name, "symbol": symbol,
             "closes": [float(k[4]) for k in data],
