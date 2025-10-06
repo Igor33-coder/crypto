@@ -9,7 +9,7 @@ import hmac
 import hashlib
 import google.generativeai as genai
 import json
-from pybit.aiohttp import KlineHTTP
+from pybit.unified_trading import HTTP
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -129,38 +129,45 @@ class BinanceAdapter(ExchangeAdapter):
         }
 
 
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ КЛАС BybitAdapter НА ЦЮ ВЕРСІЮ ▼▼▼ ---
 class BybitAdapter(ExchangeAdapter):
     """Адаптер для біржі Bybit."""
 
     def __init__(self):
         super().__init__()
         self.name = "Bybit"
-        # Для публічних даних (як klines) ключ не потрібен
-        self.client = KlineHTTP(testnet=False)
+        # Для публічних даних (як klines) ключ не потрібен. Використовуємо асинхронний HTTP клієнт.
+        self.client = HTTP(testnet=False)
         self.base_url = "https://api.bybit.com"
 
     async def get_klines(self, session, symbol, interval='60', limit=100):  # '60' хвилин = 1 година
-        # pybit використовує свій власний http клієнт, тому наш `session` не потрібен
-        response = await self.client.get_kline(symbol=symbol, interval=interval, limit=limit)
-        return self.format_klines_data(response.get('result', []), symbol)
+        # Викликаємо метод для отримання klines
+        response = await self.client.get_kline(
+            category="spot",  # Вказуємо, що нас цікавить спотовий ринок
+            symbol=symbol,
+            interval=interval,
+            limit=limit
+        )
+        # Обробляємо відповідь
+        return self.format_klines_data(response.get('result', {}).get('list', []), symbol)
 
     async def get_market_tickers(self, session):
-        url = f"{self.base_url}/v2/public/tickers"
-        async with session.get(url) as resp:
-            data = await resp.json()
-            return data.get('result', [])
+        # Використовуємо новий метод для отримання тикерів
+        response = await self.client.get_tickers(category="spot")
+        return response.get('result', {}).get('list', [])
 
     def format_klines_data(self, data, symbol):
         if not isinstance(data, list) or not data:
             raise ValueError(f"Некоректні дані від Bybit для {symbol}")
-        # Bybit повертає дані від нових до старих, перевертаємо їх
-        data = data[::-1]
+
+        # В новому API дані приходять вже в правильному порядку (від старих до нових)
+        # [startTime, open, high, low, close, volume, turnover]
         return {
             "exchange": self.name,
             "symbol": symbol,
-            "closes": [float(k['close']) for k in data],
-            "volumes": [float(k['volume']) for k in data],
-            "current_price": float(data[-1]['close'])
+            "closes": [float(k[4]) for k in data],
+            "volumes": [float(k[5]) for k in data],
+            "current_price": float(data[-1][4])
         }
 
 
