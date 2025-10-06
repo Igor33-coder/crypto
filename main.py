@@ -208,38 +208,47 @@ def calculate_ema(prices, period=10):
 
 
 # --- ▼▼▼ НОВА ФУНКЦІЯ ДЛЯ АНАЛІЗУ СВІЧНИХ ПАТЕРНІВ ▼▼▼ ---
-def analyze_candlestick_patterns(klines_data):
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ analyze_candlestick_patterns НА ЦЮ ▼▼▼ ---
+def analyze_candlestick_patterns(klines_data, exchange_name):
     """
-    Аналізує дані свічок і шукає відомі патерни на останніх свічках.
+    Аналізує дані свічок і шукає відомі патерни, враховуючи формат даних кожної біржі.
     """
-    if not klines_data or len(klines_data) < 20:  # Потрібно достатньо даних для аналізу
+    if not klines_data or len(klines_data) < 20:
         return "Недостатньо даних для аналізу патернів."
 
-    # Створюємо DataFrame з даними
-    df = pd.DataFrame(klines_data, columns=[
-        'open_time', 'open', 'high', 'low', 'close', 'volume',
-        'close_time', 'quote_asset_volume', 'number_of_trades',
-        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-    ])
+    df = None
+    # Вибираємо правильні назви колонок залежно від біржі
+    if exchange_name == "Binance":
+        columns = [
+            'open_time', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_asset_volume', 'number_of_trades',
+            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+        ]
+        df = pd.DataFrame(klines_data, columns=columns)
 
-    # Конвертуємо стовпці у числовий формат
+    elif exchange_name == "Bybit":
+        # Bybit API v5 повертає 7 колонок
+        columns = ['start_time', 'open', 'high', 'low', 'close', 'volume', 'turnover']
+        df = pd.DataFrame(klines_data, columns=columns)
+
+    if df is None:
+        return "Невідомий формат даних біржі."
+
+    # Конвертуємо ключові стовпці у числовий формат
     for col in ['open', 'high', 'low', 'close', 'volume']:
-        df[col] = pd.to_numeric(df[col])
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col])
 
-    # Використовуємо pandas_ta для пошуку ВСІХ патернів
+    # Решта логіки залишається без змін
     df.ta.cdl_pattern(name="all", append=True)
 
-    # Шукаємо патерни на останній свічці.
-    # `ta.cdl_pattern` створює стовпці з назвою патерну (напр., CDL_HAMMER).
-    # Значення 100 означає бичачий патерн, -100 - ведмежий.
     last_candle = df.iloc[-1]
     found_patterns = []
     for col in df.columns:
-        if col.startswith('CDL_'):
-            if last_candle[col] != 0:
-                pattern_name = col.replace('CDL_', '').replace('_', ' ').title()
-                direction = "Bullish" if last_candle[col] > 0 else "Bearish"
-                found_patterns.append(f"{direction} {pattern_name}")
+        if col.startswith('CDL_') and last_candle[col] != 0:
+            pattern_name = col.replace('CDL_', '').replace('_', ' ').title()
+            direction = "Bullish" if last_candle[col] > 0 else "Bearish"
+            found_patterns.append(f"{direction} {pattern_name}")
 
     if not found_patterns:
         return "Жодних значущих патернів не знайдено."
@@ -383,8 +392,6 @@ async def get_sentiment_analysis(session, asset_name):
 
 
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
-# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
-# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ analyze_coin НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 async def analyze_coin(session, symbol, exchange_name, balances):
     try:
         adapter = EXCHANGES.get(exchange_name)
@@ -407,7 +414,7 @@ async def analyze_coin(session, symbol, exchange_name, balances):
         balance = balances.get(asset, 0)
 
         # Аналіз свічних патернів
-        candlestick_patterns = analyze_candlestick_patterns(raw_klines)
+        candlestick_patterns = analyze_candlestick_patterns(raw_klines, exchange_name)
 
         # Збираємо дані в один словник для повернення
         result_data = {
