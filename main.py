@@ -225,6 +225,9 @@ async def run_market_scanner_for_exchange(session, adapter):
     try:
         all_tickers = await adapter.get_market_tickers(session)
 
+        if adapter.name == "Bybit" and all_tickers:
+            logger.info(f"DEBUG BYBIT TICKER: {all_tickers[0]}")
+
         for ticker in all_tickers:
             symbol = None
             quote_volume = 0
