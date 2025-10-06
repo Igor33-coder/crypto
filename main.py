@@ -130,45 +130,42 @@ class BinanceAdapter(ExchangeAdapter):
 
 
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ КЛАС BybitAdapter НА ЦЮ ВЕРСІЮ ▼▼▼ ---
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШ КЛАС BybitAdapter НА ЦЮ ВЕРСІЮ ▼▼▼ ---
 class BybitAdapter(ExchangeAdapter):
     """Адаптер для біржі Bybit."""
 
     def __init__(self):
         super().__init__()
         self.name = "Bybit"
-        # Для публічних даних (як klines) ключ не потрібен. Використовуємо асинхронний HTTP клієнт.
+        # Ініціалізуємо асинхронний HTTP клієнт
         self.client = HTTP(testnet=False)
         self.base_url = "https://api.bybit.com"
 
-    async def get_klines(self, session, symbol, interval='60', limit=100):  # '60' хвилин = 1 година
-        # Викликаємо метод для отримання klines
+    async def get_klines(self, session, symbol, interval='60', limit=100):
         response = await self.client.get_kline(
-            category="spot",  # Вказуємо, що нас цікавить спотовий ринок
-            symbol=symbol,
-            interval=interval,
-            limit=limit
+            category="spot", symbol=symbol, interval=interval, limit=limit
         )
-        # Обробляємо відповідь
         return self.format_klines_data(response.get('result', {}).get('list', []), symbol)
 
-    async def get_market_tickers(self, session):  # session тут більше не потрібен, але залишимо для сумісності
+    # --- ВИПРАВЛЕННЯ ТУТ ---
+    # Метод тепер правильно використовує `await` для отримання даних
+    # і повертає результат
+    async def get_market_tickers(self, session):
+        # session тут не використовується, бо pybit має свій клієнт
         response = await self.client.get_tickers(category="spot")
         return response.get('result', {}).get('list', [])
 
     def format_klines_data(self, data, symbol):
         if not isinstance(data, list) or not data:
             raise ValueError(f"Некоректні дані від Bybit для {symbol}")
-
-        # В новому API дані приходять вже в правильному порядку (від старих до нових)
-        # [startTime, open, high, low, close, volume, turnover]
+        # Новий API повертає дані [startTime, open, high, low, close, volume, turnover]
+        # Перевертати більше не потрібно, дані вже йдуть від старих до нових.
         return {
-            "exchange": self.name,
-            "symbol": symbol,
+            "exchange": self.name, "symbol": symbol,
             "closes": [float(k[4]) for k in data],
             "volumes": [float(k[5]) for k in data],
             "current_price": float(data[-1][4])
         }
-
 
 # Створюємо словник з нашими адаптерами для легкого доступу
 EXCHANGES = {
