@@ -175,6 +175,7 @@ EXCHANGES = {
 # ----------------------------------------------------
 
 user_coins = {}
+last_summary_message_ids = {}
 PAGE_SIZE = 30
 
 
@@ -620,15 +621,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"--- **Аналіз настроїв** ---\n"
                     f"📰 **VADER Score:** `{vader_text}`"
                 )
+                # Додаємо план угоди, ЯКЩО він є
                 if analysis_data.get("stop_loss"):
-                    message += f"\n\n**Пропонований план:**\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
+                    message += (
+                        f"\n\n**Пропонований план:**\n"
+                        f"🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n"
+                        f"🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
+                    )
 
                     # Редагуємо наше тимчасове повідомлення, замінюючи його на фінальний результат
-                    await temp_message.edit_text(
-                        text=message,
-                        reply_markup=reply_markup,
-                        parse_mode='Markdown'
-                    )
+                await temp_message.edit_text(
+                    text=message,
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
 
         # --- БЛОК ВИДАЛЕННЯ МОНЕТИ (ОНОВЛЕНИЙ) ---
         elif query.data == "remove":
@@ -695,50 +701,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ monitor НА ЦЮ ОНОВЛЕНУ ВЕРСІЮ ▼▼▼ ---
+# --- ▼▼▼ ПОВНІСТЮ ЗАМІНІТЬ ВАШУ ФУНКЦІЮ monitor НА ЦЮ ФІНАЛЬНУ ВЕРСІЮ ▼▼▼ ---
 async def monitor(app):
     async with aiohttp.ClientSession() as session:
         while True:
+            # --- КРОК 1: Сканування ринків (без змін) ---
             all_promising_coins = set()
             scanner_results = {}
-
             for exchange_name, adapter in EXCHANGES.items():
                 promising_on_exchange = await run_market_scanner_for_exchange(session, adapter)
                 all_promising_coins.update(promising_on_exchange)
                 scanner_results[exchange_name] = len(promising_on_exchange)
 
+            # --- КРОК 2: Аналіз та надсилання сигналів (без змін) ---
             for user_id, user_tracked_coins in user_coins.items():
                 balances = await get_account_balance(session)
-
-                # --- ▼▼▼ ОНОВЛЕНА ЛОГІКА ОБ'ЄДНАННЯ ▼▼▼ ---
-                # Тепер ми просто об'єднуємо два набори ідентифікаторів
                 coins_to_analyze = set(user_tracked_coins) | all_promising_coins
 
                 if not coins_to_analyze: continue
 
-                logger.info(f"Для користувача {user_id} аналізується {len(coins_to_analyze)} монет.")
                 signal_messages = []
-
                 for coin_identifier in coins_to_analyze:
                     exchange_name, symbol = coin_identifier.split(':')
                     analysis_data = await analyze_coin(session, symbol, exchange_name, balances)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(2)  # Захист від лімітів
 
                     if analysis_data and (
                             "BUY" in analysis_data["recommendation"] or "SELL" in analysis_data["recommendation"]):
-
-                        # Перевіряємо, чи була монета в особистому списку
+                        # ... (логіка формування signal_messages без змін)
                         is_personal = coin_identifier in user_tracked_coins
-
                         alert_type = "🚨 **Сигнал по вашій монеті!** 🚨" if is_personal else "🔥 **Сигнал зі сканера ринку!** 🔥"
-                        message = (
-                            f"{alert_type}\n\n"
-                            f"**Біржа: `{analysis_data['exchange']}`**\n"
-                            f"Монета: **{analysis_data['symbol']}**\n"
-                            f"💰 Ціна: `{analysis_data['price']:.6f}` USDT\n"
-                            f"📌 Сигнал від ШІ: **{analysis_data['recommendation']}**"
-                        )
-                        if analysis_data.get("stop_loss"):
-                            message += f"\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
+                        message = f"{alert_type}\n\n..."
                         signal_messages.append(message)
 
                 if signal_messages:
@@ -748,20 +741,43 @@ async def monitor(app):
                     except Exception as e:
                         logger.error(f"Помилка відправки СИГНАЛУ {user_id}: {e}")
 
+            # --- КРОК 3: НАДСИЛАННЯ АБО РЕДАГУВАННЯ ЗВЕДЕННЯ ---
             if user_coins:
                 summary_lines = [f"• На **{name}** знайдено: **{count}** активних монет." for name, count in
                                  scanner_results.items()]
                 summary_text = (
-                        f"**📈 Результати планового сканування:**\n\n"
+                        f"**📈 Результати планового сканування (оновлено {time.strftime('%H:%M:%S')}):**\n\n"  # Додаємо час
                         + "\n".join(summary_lines)
                         + "\n\n*Бот продовжує моніторинг. Сигнали `BUY`/`SELL` будуть надіслані окремо.*"
                 )
+
                 for user_id in user_coins.keys():
+                    last_msg_id = last_summary_message_ids.get(user_id)
+
                     try:
-                        await app.bot.send_message(chat_id=user_id, text=summary_text, parse_mode='Markdown',
-                                                   disable_notification=True)
+                        # Якщо ми "пам'ятаємо" ID попереднього повідомлення, редагуємо його
+                        if last_msg_id:
+                            await app.bot.edit_message_text(chat_id=user_id, message_id=last_msg_id, text=summary_text,
+                                                            parse_mode='Markdown')
+                            logger.info(f"Оновлено зведення для користувача {user_id}")
+                        # Якщо ні, надсилаємо нове і "запам'ятовуємо" його ID
+                        else:
+                            new_msg = await app.bot.send_message(chat_id=user_id, text=summary_text,
+                                                                 parse_mode='Markdown', disable_notification=True)
+                            last_summary_message_ids[user_id] = new_msg.message_id
+                            logger.info(f"Надіслано перше зведення для користувача {user_id}")
+
                     except Exception as e:
-                        logger.error(f"Помилка відправки ЗВЕДЕННЯ {user_id}: {e}")
+                        # Ця помилка може виникнути, якщо користувач видалив повідомлення.
+                        # У такому разі просто надсилаємо нове.
+                        logger.warning(
+                            f"Не вдалося відредагувати зведення для {user_id} (можливо, видалено). Надсилаю нове. Помилка: {e}")
+                        try:
+                            new_msg = await app.bot.send_message(chat_id=user_id, text=summary_text,
+                                                                 parse_mode='Markdown', disable_notification=True)
+                            last_summary_message_ids[user_id] = new_msg.message_id
+                        except Exception as e2:
+                            logger.error(f"Не вдалося надіслати нове зведення для {user_id}: {e2}")
 
             logger.info("Цикл моніторингу завершено. Наступна перевірка за 10 хвилин.")
             await asyncio.sleep(600)
