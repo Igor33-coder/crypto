@@ -572,10 +572,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 exchange_name, symbol = coin_identifier.split(':')
             except ValueError:
-                await query.edit_message_text("Помилка: Некоректний ідентифікатор монети.")
+                # Відповідаємо на запит, щоб кнопка не "зависала"
+                await query.answer()
+                await context.bot.send_message(chat_id=user_id, text="Помилка: Некоректний ідентифікатор монети.")
                 return
 
-            await query.edit_message_text(f"⏳ Роблю глибокий аналіз {symbol} на {exchange_name}...")
+            # Відповідаємо на запит, щоб кнопка не "зависала"
+            await query.answer()
+            # Надсилаємо тимчасове повідомлення про початок аналізу
+            temp_message = await context.bot.send_message(chat_id=user_id,
+                                                          text=f"⏳ Роблю глибокий аналіз {symbol} на {exchange_name}...")
+
             balances = await get_account_balance(session)
             analysis_data = await analyze_coin(session, symbol, exchange_name, balances)
 
@@ -584,9 +591,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             if not analysis_data:
-                await query.edit_message_text(f"Не вдалося отримати дані для {symbol} на {exchange_name}.",
-                                              reply_markup=reply_markup)
+                # Редагуємо наше тимчасове повідомлення, замінюючи його на помилку
+                await temp_message.edit_text(
+                    text=f"Не вдалося отримати дані для {symbol} на {exchange_name}.",
+                    reply_markup=reply_markup
+                )
             else:
+                # Формуємо фінальну аналітичну картку (ваш код тут правильний)
                 rsi = analysis_data.get('rsi', 0)
                 rsi_text = f"{rsi:.2f}" + (
                     " (зона перепроданості)" if rsi < 30 else " (зона перекупленості)" if rsi > 70 else "")
@@ -612,7 +623,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if analysis_data.get("stop_loss"):
                     message += f"\n\n**Пропонований план:**\n🛡️ Stop-Loss: `{analysis_data['stop_loss']:.6f}`\n🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
 
-                await query.edit_message_text(text=message, reply_markup=reply_markup, parse_mode='Markdown')
+                    # Редагуємо наше тимчасове повідомлення, замінюючи його на фінальний результат
+                    await temp_message.edit_text(
+                        text=message,
+                        reply_markup=reply_markup,
+                        parse_mode='Markdown'
+                    )
 
         # --- БЛОК ВИДАЛЕННЯ МОНЕТИ (ОНОВЛЕНИЙ) ---
         elif query.data == "remove":
@@ -754,6 +770,7 @@ async def monitor(app):
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", start))  # <--- ДОДАЙТЕ ЦЕЙ РЯДОК
     app.add_handler(CallbackQueryHandler(button_handler))
 
     async def on_startup(app):
