@@ -639,6 +639,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
 
+                # --- НОВІ БЛОКИ: Обробка навігації ПІСЛЯ аналізу ---
+        elif query.data.startswith("mycoins_navigate"):
+            try:
+                # Намагаємося видалити повідомлення з аналізом
+                msg_id = int(query.data.split('_')[-1])
+                await context.bot.delete_message(chat_id=user_id, message_id=msg_id)
+            except (ValueError, IndexError, AttributeError):
+                pass  # Ігноруємо помилки, якщо ID не знайдено або повідомлення вже видалено
+
+            # Надсилаємо НОВЕ повідомлення зі списком монет
+            coins = user_coins.get(user_id, [])
+            if not coins:
+                await context.bot.send_message(chat_id=user_id, text="Список відстежуваних монет порожній.")
+            else:
+                keyboard = [[InlineKeyboardButton(coin_id.replace(":", ": "), callback_data=f"analyze_{coin_id}")] for
+                            coin_id in sorted(coins)]
+                keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await context.bot.send_message(chat_id=user_id,
+                                               text="📋 **Твої монети** (натисніть для глибокого аналізу):",
+                                               reply_markup=reply_markup, parse_mode='Markdown')
+
+        elif query.data.startswith("back_to_start_navigate"):
+            try:
+                # Намагаємося видалити повідомлення з аналізом
+                msg_id = int(query.data.split('_')[-1])
+                await context.bot.delete_message(chat_id=user_id, message_id=msg_id)
+            except (ValueError, IndexError, AttributeError):
+                pass
+
+            # Надсилаємо НОВЕ повідомлення з головним меню
+            keyboard = [[InlineKeyboardButton("🔍 Сканер ринку", callback_data="market_scanner")],
+                        [InlineKeyboardButton("➕ Додати монету", callback_data="add")],
+                        [InlineKeyboardButton("➖ Видалити монету", callback_data="remove")],
+                        [InlineKeyboardButton("📋 Мої монети", callback_data="mycoins")], ]
+            await context.bot.send_message(chat_id=user_id, text=f"Привіт 👋! Я твій крипто-помічник.",
+                                           reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
         # --- БЛОК ВИДАЛЕННЯ МОНЕТИ (ОНОВЛЕНИЙ) ---
         elif query.data == "remove":
             coins = user_coins.get(user_id, [])
