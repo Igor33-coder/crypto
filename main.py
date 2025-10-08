@@ -573,33 +573,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 exchange_name, symbol = coin_identifier.split(':')
             except ValueError:
+                # Відповідаємо на запит, щоб кнопка не "зависала"
                 await query.answer()
                 await context.bot.send_message(chat_id=user_id, text="Помилка: Некоректний ідентифікатор монети.")
                 return
 
+            # Відповідаємо на запит, щоб кнопка не "зависала"
             await query.answer()
+            # Надсилаємо тимчасове повідомлення про початок аналізу
             temp_message = await context.bot.send_message(chat_id=user_id,
                                                           text=f"⏳ Роблю глибокий аналіз {symbol} на {exchange_name}...")
 
             balances = await get_account_balance(session)
             analysis_data = await analyze_coin(session, symbol, exchange_name, balances)
 
-            # Отримуємо ID нашого тимчасового повідомлення
-            msg_id = temp_message.message_id
-
-            # Створюємо кнопки навігації, "заряджаючи" їх цим ID
-            keyboard = [
-                [InlineKeyboardButton("⬅️ До списку", callback_data=f"mycoins_navigate_{msg_id}")],
-                [InlineKeyboardButton("🏠 Головне меню", callback_data=f"back_to_start_navigate_{msg_id}")]
-            ]
+            keyboard = [[InlineKeyboardButton("⬅️ До списку", callback_data="mycoins")],
+                        [InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             if not analysis_data:
+                # Редагуємо наше тимчасове повідомлення, замінюючи його на помилку
                 await temp_message.edit_text(
                     text=f"Не вдалося отримати дані для {symbol} на {exchange_name}.",
                     reply_markup=reply_markup
                 )
             else:
+                # Формуємо фінальну аналітичну картку (ваш код тут правильний)
                 rsi = analysis_data.get('rsi', 0)
                 rsi_text = f"{rsi:.2f}" + (
                     " (зона перепроданості)" if rsi < 30 else " (зона перекупленості)" if rsi > 70 else "")
@@ -622,7 +621,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"--- **Аналіз настроїв** ---\n"
                     f"📰 **VADER Score:** `{vader_text}`"
                 )
-
                 # Додаємо план угоди, ЯКЩО він є
                 if analysis_data.get("stop_loss"):
                     message += (
@@ -631,51 +629,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
                     )
 
-                # --- ▼▼▼ ВИПРАВЛЕННЯ ТУТ ▼▼▼ ---
-                # Редагуємо повідомлення ЗАВЖДИ, після всіх перевірок
+                    # Редагуємо наше тимчасове повідомлення, замінюючи його на фінальний результат
                 await temp_message.edit_text(
                     text=message,
                     reply_markup=reply_markup,
                     parse_mode='Markdown'
                 )
-
-                # --- НОВІ БЛОКИ: Обробка навігації ПІСЛЯ аналізу ---
-        elif query.data.startswith("mycoins_navigate"):
-            try:
-                # Намагаємося видалити повідомлення з аналізом
-                msg_id = int(query.data.split('_')[-1])
-                await context.bot.delete_message(chat_id=user_id, message_id=msg_id)
-            except (ValueError, IndexError, AttributeError):
-                pass  # Ігноруємо помилки, якщо ID не знайдено або повідомлення вже видалено
-
-            # Надсилаємо НОВЕ повідомлення зі списком монет
-            coins = user_coins.get(user_id, [])
-            if not coins:
-                await context.bot.send_message(chat_id=user_id, text="Список відстежуваних монет порожній.")
-            else:
-                keyboard = [[InlineKeyboardButton(coin_id.replace(":", ": "), callback_data=f"analyze_{coin_id}")] for
-                            coin_id in sorted(coins)]
-                keyboard.append([InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")])
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await context.bot.send_message(chat_id=user_id,
-                                               text="📋 **Твої монети** (натисніть для глибокого аналізу):",
-                                               reply_markup=reply_markup, parse_mode='Markdown')
-
-        elif query.data.startswith("back_to_start_navigate"):
-            try:
-                # Намагаємося видалити повідомлення з аналізом
-                msg_id = int(query.data.split('_')[-1])
-                await context.bot.delete_message(chat_id=user_id, message_id=msg_id)
-            except (ValueError, IndexError, AttributeError):
-                pass
-
-            # Надсилаємо НОВЕ повідомлення з головним меню
-            keyboard = [[InlineKeyboardButton("🔍 Сканер ринку", callback_data="market_scanner")],
-                        [InlineKeyboardButton("➕ Додати монету", callback_data="add")],
-                        [InlineKeyboardButton("➖ Видалити монету", callback_data="remove")],
-                        [InlineKeyboardButton("📋 Мої монети", callback_data="mycoins")], ]
-            await context.bot.send_message(chat_id=user_id, text=f"Привіт 👋! Я твій крипто-помічник.",
-                                           reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
         # --- БЛОК ВИДАЛЕННЯ МОНЕТИ (ОНОВЛЕНИЙ) ---
         elif query.data == "remove":
