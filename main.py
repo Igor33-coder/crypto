@@ -573,32 +573,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 exchange_name, symbol = coin_identifier.split(':')
             except ValueError:
-                # Відповідаємо на запит, щоб кнопка не "зависала"
                 await query.answer()
                 await context.bot.send_message(chat_id=user_id, text="Помилка: Некоректний ідентифікатор монети.")
                 return
 
-            # Відповідаємо на запит, щоб кнопка не "зависала"
             await query.answer()
-            # Надсилаємо тимчасове повідомлення про початок аналізу
             temp_message = await context.bot.send_message(chat_id=user_id,
                                                           text=f"⏳ Роблю глибокий аналіз {symbol} на {exchange_name}...")
 
             balances = await get_account_balance(session)
             analysis_data = await analyze_coin(session, symbol, exchange_name, balances)
 
-            keyboard = [[InlineKeyboardButton("⬅️ До списку", callback_data="mycoins")],
-                        [InlineKeyboardButton("🏠 Головне меню", callback_data="back_to_start")]]
+            # Отримуємо ID нашого тимчасового повідомлення
+            msg_id = temp_message.message_id
+
+            # Створюємо кнопки навігації, "заряджаючи" їх цим ID
+            keyboard = [
+                [InlineKeyboardButton("⬅️ До списку", callback_data=f"mycoins_navigate_{msg_id}")],
+                [InlineKeyboardButton("🏠 Головне меню", callback_data=f"back_to_start_navigate_{msg_id}")]
+            ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             if not analysis_data:
-                # Редагуємо наше тимчасове повідомлення, замінюючи його на помилку
                 await temp_message.edit_text(
                     text=f"Не вдалося отримати дані для {symbol} на {exchange_name}.",
                     reply_markup=reply_markup
                 )
             else:
-                # Формуємо фінальну аналітичну картку (ваш код тут правильний)
                 rsi = analysis_data.get('rsi', 0)
                 rsi_text = f"{rsi:.2f}" + (
                     " (зона перепроданості)" if rsi < 30 else " (зона перекупленості)" if rsi > 70 else "")
@@ -621,6 +622,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"--- **Аналіз настроїв** ---\n"
                     f"📰 **VADER Score:** `{vader_text}`"
                 )
+
                 # Додаємо план угоди, ЯКЩО він є
                 if analysis_data.get("stop_loss"):
                     message += (
@@ -629,7 +631,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"🎯 Take-Profit: `{analysis_data['take_profit']:.6f}`"
                     )
 
-                    # Редагуємо наше тимчасове повідомлення, замінюючи його на фінальний результат
+                # --- ▼▼▼ ВИПРАВЛЕННЯ ТУТ ▼▼▼ ---
+                # Редагуємо повідомлення ЗАВЖДИ, після всіх перевірок
                 await temp_message.edit_text(
                     text=message,
                     reply_markup=reply_markup,
